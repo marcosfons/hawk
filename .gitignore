@@ -1,0 +1,15 @@
+# Build output (SwiftPM and the assembled app)
+.build/
+build/
+.swiftpm/
+
+# Coverage and profiling output
+*.profraw
+*.profdata
+*.trace
+
+# macOS
+.DS_Store
+
+# Claude Code per-user settings (project settings.json is shared)
+.claude/settings.local.json
