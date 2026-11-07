@@ -84,6 +84,14 @@ icon generator.
 (needs + own work with a background watch + an on-demand heavy scan) are the
 reference examples.
 
+## Docs
+
+| File | What it is |
+|---|---|
+| `docs/engineering-guidelines.md` | How code is written here: performance and energy, SwiftUI, macOS design, accessibility, security, testing |
+| `docs/android-requirements.md` | What the Android toolkit must do, with findings checked on a real device |
+| `docs/android-plans/` | Execution plans for the Android work (foundation first, then parallel plans) and their binding `STANDARDS.md` |
+
 ## Window and menu bar
 
 - Hawk runs from launch to Quit. Closing the window frees its views and hides
@@ -93,11 +101,38 @@ reference examples.
 - `AppModel.updateVisibility()` is the single place that decides what is on
   screen and tells features and the Monitor.
 
-## Performance budget (measured, not guessed)
+## Performance and energy budget (measured, not guessed)
 
-Hawk must cost **under 5% of one core** in normal use, window visible, and
-stay under ~100 MB. Measure with `sample <pid> 10` and count busy samples per
-thread; the header shows Hawk's own CPU and memory live. What we learned:
+Low CPU, memory and energy use is a requirement, not a nice-to-have. Every
+change is measured against these limits before it is committed:
+
+| State | CPU (one core, avg over 60 s) | Memory |
+|---|---|---|
+| Window visible, normal use (lists, tables, search, charts) | **under 5%** | under ~100 MB |
+| Window visible, something deliberately heavy the user started (scrcpy mirror, a deep scan) | may exceed 5% while it runs; back under 5% when it stops | under ~100 MB |
+| **Full background** (window closed, menu bar only) | **under 2%, target under 1%** | under ~100 MB |
+
+- Background limits hold **without dropping features**: fan control, alerts,
+  energy totals and the Android ANR check keep running. Do less, less often,
+  more cheaply; never switch a feature off to meet the number.
+- **Energy**: no timer fires and nothing polls while nothing needs it; prefer
+  event sources (IOKit notifications, sockets, file events) over polling;
+  coalesce work into one wakeup per interval; give timers tolerance; run
+  background work at `.utility` or `.background` QoS so macOS can schedule it on
+  efficiency cores and keep App Nap possible.
+- **Lists, tables and search stay fast at any size**: `DataTable` for anything
+  live or long, cells rewritten in place, no SwiftUI `Table`/`List` for live
+  data; search and filters debounced (~150 ms) and computed off the main actor,
+  incrementally where data streams; never sort or filter in `body`.
+- **Measure**: `top -l 60 -s 1 -pid <pid> -stats cpu,mem,power` (CPU, memory,
+  energy impact), `footprint <pid>`, `sample <pid> 10` (count busy samples per
+  thread), `leaks <pid>` for long runs, and Instruments from the command line
+  (`xcrun xctrace record --template 'Time Profiler' --attach Hawk --time-limit
+  30s --output build/perf/time.trace`; also the `SwiftUI` and `Allocations`
+  templates). Measure both states: window open and window closed. The header
+  shows Hawk's own CPU and memory live.
+
+What we learned:
 
 - **Sampling never runs on the main actor.** `Engine` (an actor) samples and
   decides; the UI receives one finished `Tick` per interval.
@@ -122,6 +157,10 @@ thread; the header shows Hawk's own CPU and memory live. What we learned:
   hundreds of MB).
 
 ## Code quality rules
+
+Full guidelines (SwiftUI correctness and performance, macOS design,
+accessibility, security, testing): `docs/engineering-guidelines.md`. Every
+change follows them; the points below are the ones most often missed.
 
 - **No dead code.** Remove what stops being called in the same change.
   Comments explain *why*, never history.
