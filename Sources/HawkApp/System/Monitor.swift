@@ -2,12 +2,17 @@
 //  Monitor.swift
 //  Hawk
 //
-//  The app's state on the main actor: the latest snapshot, its history, and the
-//  user's settings. It drives the Engine on a timer and applies what comes back;
-//  views read from here and write only settings.
+//  The shared system data, on the main actor: the latest snapshot, its history,
+//  processes, energy, network, alerts, and the settings that drive them. It runs
+//  the Engine on a timer from launch to quit, window or not, because fan
+//  control, alerts and energy totals must keep working in the menu bar.
+//
+//  What it samples beyond the basics follows `needs` (set by AppModel from the
+//  visible features). While nothing shows its data (`publishing` false) it keeps
+//  ticks back instead of updating observed state, so a closed window costs only
+//  the sampling; `headline` is the one exception, for the menu bar label.
 //
 
-import AppKit
 import HawkKit
 import Foundation
 import Observation
@@ -18,25 +23,16 @@ enum SampleInterval: Double, CaseIterable, Identifiable {
     var label: String { rawValue < 1 ? "0.5 s" : "\(Int(rawValue)) s" }
 }
 
-enum Tab: String, CaseIterable, Identifiable {
-    case overview = "Overview", cpu = "CPU", memory = "Memory", energy = "Energy", network = "Network", storage = "Storage"
-    var id: String { rawValue }
-    var symbol: String {
-        switch self {
-        case .overview: "gauge.with.dots.needle.67percent"
-        case .cpu: "cpu"
-        case .memory: "memorychip"
-        case .energy: "bolt.fill"
-        case .network: "network"
-        case .storage: "internaldrive"
-        }
-    }
-}
-
 enum ChartRange: Double, CaseIterable, Identifiable {
     case oneMinute = 60, fiveMinutes = 300, tenMinutes = 600
     var id: Double { rawValue }
     var label: String { "\(Int(rawValue / 60)) min" }
+}
+
+/// The few figures the menu bar label shows, rounded so it only redraws when they change.
+struct Headline: Equatable {
+    var chip: Int?
+    var cpu = 0
 }
 
 @Observable
@@ -45,13 +41,13 @@ final class Monitor {
     private(set) var control = ControlStatus()
     private(set) var history = History()
     private(set) var hasData = false
+    private(set) var headline = Headline()
     /// Bytes moved on physical interfaces since the app started.
     private(set) var downloaded = 0.0
     private(set) var uploaded = 0.0
     private(set) var processes: [ProcessStat] = []
     /// Why some figures are missing from the process list, if they are.
     private(set) var processNote: String?
-    var processSearch = ""
     private(set) var energy: [EnergyUse] = []
     private(set) var systemEnergy = 0.0
     private(set) var unpluggedAt: Date?
@@ -62,7 +58,6 @@ final class Monitor {
     /// Hawk's own CPU (1.0 = one core) and memory, so its cost is always in view.
     private(set) var selfCPU = 0.0
     private(set) var selfMemory: UInt64 = 0
-    var tab: Tab { didSet { save() } }
 
     var settings: ControlSettings { didSet { save() } }
     var interval: SampleInterval { didSet { save() } }
@@ -70,16 +65,21 @@ final class Monitor {
     var energyWindow: EnergyWindow { didSet { save() } }
     var alertSettings: AlertSettings { didSet { save() } }
 
+    /// What the visible features need sampled. Set by AppModel.
+    @ObservationIgnored var needs: Set<Need> = []
+    /// Whether a window or the menu bar panel shows Monitor's data. Set by AppModel.
+    @ObservationIgnored var publishing = true {
+        didSet { if publishing && !oldValue { catchUp() } }
+    }
+
     @ObservationIgnored private let engine = Engine()
     @ObservationIgnored private let notifier = Notifier()
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private let defaults = UserDefaults.standard
-    /// Samples taken while the window was hidden. Views are not updated for them
-    /// until it shows again, so a hidden window costs only the sampling.
+    /// Ticks taken while nothing was showing; applied when something shows again.
     @ObservationIgnored private var backlog: [Tick] = []
     /// Only the newest lists matter, so the backlog does not keep one per tick.
     @ObservationIgnored private var pendingLists: Tick?
-    @ObservationIgnored private var windowVisible = true
     @ObservationIgnored private let launched = Date()
     @ObservationIgnored private var busySince: Date?
     @ObservationIgnored private var lastBusyWarning = Date.distantPast
@@ -88,37 +88,18 @@ final class Monitor {
         settings = defaults.data(forKey: "settings").flatMap { try? JSONDecoder().decode(ControlSettings.self, from: $0) } ?? ControlSettings()
         interval = SampleInterval(rawValue: defaults.double(forKey: "interval")) ?? .one
         range = ChartRange(rawValue: defaults.double(forKey: "range")) ?? .fiveMinutes
-        tab = defaults.string(forKey: "tab").flatMap(Tab.init(rawValue:)) ?? .overview
         energyWindow = defaults.string(forKey: "energyWindow").flatMap(EnergyWindow.init(rawValue:)) ?? .hour
         alertSettings = defaults.data(forKey: "alerts").flatMap { try? JSONDecoder().decode(AlertSettings.self, from: $0) } ?? AlertSettings()
-        NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.setWindowVisible(NSApp.windows.contains { $0.isVisible && $0.occlusionState.contains(.visible) })
-            }
-        }
-    }
-
-    private func setWindowVisible(_ visible: Bool) {
-        guard visible != windowVisible else { return }
-        windowVisible = visible
-        Log.app.debug("Window \(visible ? "visible" : "hidden"); \(backlog.count) samples to catch up")
-        if visible {
-            for tick in backlog { apply(tick) }
-            backlog.removeAll()
-            if let lists = pendingLists { applyLists(lists) }
-            pendingLists = nil
-        }
     }
 
     func start() {
         guard loop == nil else { return }
-        Log.app.info("Monitoring every \(interval.label), fan mode \(settings.mode.rawValue), tab \(tab.rawValue)")
+        Log.app.info("Monitoring every \(interval.label), fan mode \(settings.mode.rawValue)")
         MainThreadWatchdog.shared.start()
         loop = Task {
             while !Task.isCancelled {
-                let visible = windowVisible
-                let request = TickRequest(settings: settings, processes: visible && (tab == .cpu || tab == .memory),
-                                          energy: visible && tab == .energy, network: visible && tab == .network,
+                let request = TickRequest(settings: settings, processes: needs.contains(.processes),
+                                          energy: needs.contains(.energy), network: needs.contains(.network),
                                           energyWindow: energyWindow, alerts: alertSettings)
                 apply(await engine.tick(request))
                 try? await Task.sleep(for: .seconds(interval.rawValue))
@@ -129,6 +110,15 @@ final class Monitor {
     /// Before quitting: keep the energy totals.
     func stop() async { await engine.save() }
 
+    /// Raises an alert from outside the Engine (a feature's own checks): listed with the
+    /// others and posted as a notification when those are on.
+    func post(_ alert: FanAlert) {
+        alerts.insert(alert, at: 0)
+        alerts = Array(alerts.prefix(50))
+        unseenAlerts += 1
+        if alertSettings.notify { notifier.post(alert) }
+    }
+
     func alertsSeen() { unseenAlerts = 0 }
     func clearAlerts() { alerts.removeAll(); unseenAlerts = 0 }
 
@@ -136,15 +126,12 @@ final class Monitor {
 
     private func apply(_ tick: Tick) {
         let s = tick.snapshot
-        // Alerts go out whether or not the window is visible.
-        if !tick.alerts.isEmpty {
-            alerts.insert(contentsOf: tick.alerts.reversed(), at: 0)
-            alerts = Array(alerts.prefix(50))
-            unseenAlerts += tick.alerts.count
-            if alertSettings.notify { for a in tick.alerts { notifier.post(a) } }
-        }
+        // Alerts and the menu bar headline go out whether or not anything is showing.
+        for alert in tick.alerts { post(alert) }
+        let headline = Headline(chip: s.socMax.map { Int($0.rounded()) }, cpu: Int((s.cpuTotal * 100).rounded()))
+        if headline != self.headline { self.headline = headline }
         watchOwnCost(tick)
-        guard windowVisible else {
+        guard publishing else {
             if tick.processes != nil || tick.energy != nil || tick.network != nil { pendingLists = tick }
             backlog.append(tick.slim)
             if backlog.count > History.capacity { backlog.removeFirst() }
@@ -168,6 +155,15 @@ final class Monitor {
         hasData = true
     }
 
+    private func catchUp() {
+        Log.app.debug("Showing again; \(backlog.count) samples to catch up")
+        let ticks = backlog
+        backlog.removeAll()
+        for tick in ticks { apply(tick) }
+        if let lists = pendingLists { applyLists(lists) }
+        pendingLists = nil
+    }
+
     private func applyLists(_ tick: Tick) {
         if let p = tick.processes {
             processes = p
@@ -185,8 +181,9 @@ final class Monitor {
         busySince = since
         if now.timeIntervalSince(since) >= 10, now.timeIntervalSince(lastBusyWarning) > 300 {
             lastBusyWarning = now
-            Log.app.warning(String(format: "Hawk itself used %.0f%% CPU for 10 s (tab %@, window %@, last tick %.0f ms)",
-                                   tick.selfCPU * 100, tab.rawValue, windowVisible ? "visible" : "hidden", tick.tickMilliseconds))
+            Log.app.warning(String(format: "Hawk itself used %.0f%% CPU for 10 s (needs %@, %@, last tick %.0f ms)",
+                                   tick.selfCPU * 100, needs.map(\.rawValue).sorted().joined(separator: ","),
+                                   publishing ? "showing" : "hidden", tick.tickMilliseconds))
         }
     }
 
@@ -197,7 +194,6 @@ final class Monitor {
         } catch { Log.app.error("Could not save settings: \(error.localizedDescription)") }
         defaults.set(interval.rawValue, forKey: "interval")
         defaults.set(range.rawValue, forKey: "range")
-        defaults.set(tab.rawValue, forKey: "tab")
         defaults.set(energyWindow.rawValue, forKey: "energyWindow")
     }
 }

@@ -25,6 +25,10 @@ public struct FanAlert: Sendable, Identifiable, Equatable {
     public let title: String
     public let body: String
     public let date: Date
+
+    public init(key: String, title: String, body: String, date: Date = Date()) {
+        self.key = key; self.title = title; self.body = body; self.date = date
+    }
 }
 
 /// Turns samples into alerts. A condition must hold for its whole sustain time before

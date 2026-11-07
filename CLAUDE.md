@@ -1,7 +1,8 @@
 # hawk
 
 A menu bar toolkit for an Apple Silicon Mac: system monitor, fan control,
-energy, network and processes, storage cleanup. Swift 6 + SwiftUI, with AppKit
+energy, network and processes, storage cleanup, Android devices, security
+checks. Swift 6 + SwiftUI, with AppKit
 where SwiftUI is too slow or cannot do it. macOS 26+. Built with SwiftPM and a
 Makefile (no Xcode project).
 
@@ -39,13 +40,58 @@ interface behaviour is verified when it has only been reasoned about.
 
 | Target | What it is |
 |---|---|
-| `HawkKit` | Everything that measures or decides, no UI: SMC, HID sensors, sampler, processes, energy, network, alerts, fan curve, helper protocol, storage (`Storage/`), logging |
-| `HawkApp` | The app. `Model/` (Monitor, Engine, StorageModel, History), `Views/`, `Support/` |
+| `HawkKit` | Everything that measures or decides, no UI: SMC, HID sensors, sampler, processes, energy, network, alerts, fan curve, helper protocol, `Storage/`, `Android/`, `Security/`, logging |
+| `HawkApp` | The app, below |
 | `hawkd` | Root helper run by launchd: the only process that writes fan speeds; also reads system processes' counters |
 | `hawk` | Command-line monitor (`hawk watch`, `log`, `dump`, `set`, `auto`) |
 
+`HawkApp` folders:
+
+| Folder | What lives there |
+|---|---|
+| `App/` | `HawkApp` (scenes: window + menu bar), `RootView` (window shell, header), `MenuBar` (icon, label, panel), `AlertsPanel` |
+| `Core/` | `Feature` (the protocol), `AppModel` (feature list, selection, visibility), `Refresher` (scheduled work), `Diagnostics` |
+| `System/` | `Monitor` (shared system data on the main actor), `Engine` (sampling actor), `History` |
+| `UI/` | Building blocks every feature uses: `Theme`, `Components` (Card, meters, gauges), `HistoryChart`, `DataTable` |
+| `Features/<Name>/` | One folder per tab: the feature class, its model and views |
+
 `Support/` holds Info.plist, the launchd plist and the icon set; `tools/` the
 icon generator.
+
+## Adding a feature (a tab)
+
+1. Logic that measures or decides goes in `HawkKit/<Area>/`, with tests.
+2. In `HawkApp/Features/<Name>/<Name>Feature.swift`, a class conforming to
+   `Feature`: `id` (stable, saved), `title`, `symbol`, `makeView()`.
+3. Pick the kind of work it does (a feature can have several):
+   - **Shared system data** (processes, network, energy): declare `needs`; read
+     it from `Monitor`. The Monitor samples it only while a visible feature
+     needs it.
+   - **Its own periodic work**: an actor for the slow part, and a
+     `Refresher(foreground:background:)` started from `setVisible`. Give it a
+     `background` interval only if it must run with the tab closed (Security's
+     startup-item watch), and keep that cheap.
+   - **Heavy, on demand** (a deep scan): only from a button that says it is
+     heavier, with progress (`SecurityFeature.deepScan`).
+   - **Must run with no window at all, every second** (fan control, alerts,
+     energy totals): that is the Engine's job, not a feature's.
+4. Raise alerts with `monitor.post(_:)`, so they share the list and notifications.
+5. Live lists use `DataTable` (`Column`s + optional `menu` and `onSelect`);
+   cards use `Card`; colours and fonts come from `Theme`.
+6. Add the feature to `AppModel.init`'s list. That is the only wiring.
+
+`AndroidFeature` (own periodic work, foreground only) and `SecurityFeature`
+(needs + own work with a background watch + an on-demand heavy scan) are the
+reference examples.
+
+## Window and menu bar
+
+- Hawk runs from launch to Quit. Closing the window frees its views and hides
+  the Dock icon; Hawk carries on in the menu bar. The Monitor keeps sampling
+  (fan control, alerts, energy) but publishes nothing while neither the window
+  nor the menu panel shows it, except `headline` for the menu bar label.
+- `AppModel.updateVisibility()` is the single place that decides what is on
+  screen and tells features and the Monitor.
 
 ## Performance budget (measured, not guessed)
 
@@ -64,10 +110,12 @@ thread; the header shows Hawk's own CPU and memory live. What we learned:
   row views every update (5-35% CPU). DataTable rewrites the visible cells in
   place and pauses while scrolling.
 - **Charts are `Canvas`**, not Swift Charts, capped at 120 points.
-- **Measure only what is shown**: processes and network only while their tab is
-  open (processes every 15 s in the background, for energy totals); temperature
-  sensors every 3 s; battery every 2 s; disk capacity every 30 s.
-- **A hidden window updates nothing**; samples are caught up when it shows.
+- **Measure only what is shown**: processes and network only while a visible
+  feature needs them (processes every 15 s in the background, for energy
+  totals); temperature sensors every 3 s; battery every 2 s; disk capacity
+  every 30 s.
+- **A hidden window updates nothing**, a closed one does not exist; samples are
+  caught up when something shows again.
 - Expensive one-off work (SMC key discovery, battery health) is cached in
   UserDefaults and refreshed after the window is up.
 - Caches hold small things: app icons as 16 pt bitmaps (full icons cost

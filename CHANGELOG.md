@@ -19,3 +19,9 @@ the app's About box and `CFBundleShortVersionString` show the current one.
 - Root helper `hawkd` for fan control and system process figures.
 - `hawk` command-line monitor.
 - Logging with timings of every step and a main-thread stall watchdog.
+- Menu bar item with a live panel; closing the window keeps Hawk running there.
+- Features as plug-ins: each tab is a `Feature`, with `Refresher` for its
+  scheduled work.
+- Android tab: devices over USB, Wi-Fi and emulators, with details.
+- Security tab: startup items (with an alert for new ones), programs in odd
+  places, secret files held open, on-demand signature scan.

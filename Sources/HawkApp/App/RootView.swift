@@ -2,16 +2,17 @@
 //  RootView.swift
 //  Hawk
 //
-//  Header with the numbers that matter most, then the fan card across the full
-//  width and the rest in a grid that reflows from one to several columns as the
-//  window is resized.
+//  The window: a header with the tabs and the numbers that matter most, and the
+//  selected feature below it. The window's views exist only while it is open;
+//  closing it frees them and Hawk carries on in the menu bar.
 //
 
+import AppKit
 import HawkKit
 import SwiftUI
 
 struct RootView: View {
-    @Environment(Monitor.self) private var monitor
+    @Environment(AppModel.self) private var app
     /// Measured once per resize; layouts choose from it instead of ViewThatFits,
     /// which would measure every alternative on each update.
     @State private var width: CGFloat = 1000
@@ -19,74 +20,51 @@ struct RootView: View {
     var body: some View {
         VStack(spacing: 0) {
             HeaderBar(width: width)
-            switch monitor.tab {
-            case .cpu: ProcessesView(kind: .cpu)
-            case .memory: ProcessesView(kind: .memory)
-            case .energy: EnergyView()
-            case .network: NetworkView()
-            case .storage: StorageView(wide: width >= 1000)
-            case .overview: overview
-            }
+            app.selected.makeView()
+                .environment(\.contentWidth, width)
         }
         .background(Palette.background)
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-        .task { monitor.start() }
-    }
-
-    /// Nothing until the first sample (a fraction of a second), rather than a spinner
-    /// that would flash and then jump to the cards.
-    @ViewBuilder private var overview: some View {
-            if monitor.hasData {
-                ScrollView {
-                    VStack(spacing: Metrics.spacing) {
-                        FanCard(wide: width >= 900)
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: Metrics.minCardWidth), spacing: Metrics.spacing, alignment: .top)],
-                                  spacing: Metrics.spacing) {
-                            CPUCard()
-                            TemperatureCard()
-                            GPUCard()
-                            MemoryCard()
-                            PowerCard()
-                            DiskCard()
-                            NetworkCard()
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
-                }
-                .scrollIndicators(.automatic)
-            } else {
-                Color.clear
-            }
+        .onAppear {
+            NSApp.setActivationPolicy(.regular)
+            app.windowAppeared()
+        }
+        .onDisappear {
+            // No window, no Dock icon: Hawk lives in the menu bar until reopened.
+            NSApp.setActivationPolicy(.accessory)
+            app.windowDisappeared()
+        }
     }
 }
 
 /// The always-visible summary. Chips drop out from the least important end when
-/// the window gets narrow.
+/// the window gets narrow, and tabs lose their titles before that.
 struct HeaderBar: View {
     let width: CGFloat
+    @Environment(AppModel.self) private var app
     @Environment(Monitor.self) private var monitor
 
     var body: some View {
+        @Bindable var app = app
         @Bindable var monitor = monitor
-        let s = monitor.snapshot
+        let iconsOnly = width < 1550
+        let tabsWidth: CGFloat = iconsOnly ? CGFloat(app.features.count) * 38 : CGFloat(app.features.count) * 104
         HStack(spacing: 10) {
-            Picker("View", selection: $monitor.tab) {
-                // Icons only when the window is too narrow for six labelled tabs.
-                ForEach(Tab.allCases) { tab in
-                    if width < 1300 {
-                        Image(systemName: tab.symbol).accessibilityLabel(tab.rawValue).tag(tab)
+            Picker("View", selection: $app.selectedID) {
+                ForEach(app.features, id: \.id) { feature in
+                    if iconsOnly {
+                        Image(systemName: feature.symbol).accessibilityLabel(feature.title).tag(feature.id)
                     } else {
-                        Label(tab.rawValue, systemImage: tab.symbol).tag(tab)
+                        Label(feature.title, systemImage: feature.symbol).tag(feature.id)
                     }
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            chips(s, count: min(max(Int((width - (width < 1300 ? 560 : 900)) / 105), 0), 7))
+            chips(monitor.snapshot, count: min(max(Int((width - Metrics.titleBarInset - tabsWidth - 340) / 105), 0), 7))
             Spacer(minLength: 0)
             // No .help() anywhere in the header or the Overview: a tooltip makes SwiftUI
             // re-hit-test the whole window after every update, which cost more than the update.

@@ -1,27 +1,44 @@
 //
-//  ProcessesView.swift
+//  ProcessesFeature.swift
 //  Hawk
 //
 //  The CPU and Memory tabs: every process in a sortable table, with search.
+//  They need the Monitor's process sample while visible.
 //  Columns have fixed widths and CPU is smoothed in the sampler, so rows move
 //  only when the ordering really changes. The table itself is AppKit
 //  (DataTable.swift): SwiftUI's Table rebuilt every row view each second.
 //
 
 import HawkKit
+import Observation
 import SwiftUI
 
-struct ProcessesView: View {
+@Observable
+final class ProcessesFeature: Feature {
     enum Kind { case cpu, memory }
     let kind: Kind
+    var search = ""
+
+    init(kind: Kind) { self.kind = kind }
+
+    var id: String { kind == .cpu ? "cpu" : "memory" }
+    var title: String { kind == .cpu ? "CPU" : "Memory" }
+    var symbol: String { kind == .cpu ? "cpu" : "memorychip" }
+    var needs: Set<Need> { [.processes] }
+
+    func makeView() -> AnyView { AnyView(ProcessesView(feature: self)) }
+}
+
+private struct ProcessesView: View {
+    @Bindable var feature: ProcessesFeature
     @Environment(Monitor.self) private var monitor
 
     var body: some View {
-        @Bindable var monitor = monitor
-        let rows = filtered(monitor.processes, search: monitor.processSearch)
+        let kind = feature.kind
+        let rows = filtered(monitor.processes, search: feature.search)
         VStack(spacing: 10) {
             HStack(spacing: 12) {
-                SearchField(text: $monitor.processSearch)
+                SearchField(text: $feature.search)
                 ProcessSummary(kind: kind, shown: rows, total: monitor.processes.count)
                 Spacer(minLength: 0)
                 if let note = monitor.processNote {
@@ -73,7 +90,7 @@ struct SearchField: View {
 }
 
 private struct ProcessSummary: View {
-    let kind: ProcessesView.Kind
+    let kind: ProcessesFeature.Kind
     let shown: [ProcessStat]
     let total: Int
 

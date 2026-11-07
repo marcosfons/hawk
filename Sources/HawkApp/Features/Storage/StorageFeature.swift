@@ -29,9 +29,27 @@ extension StorageEntry.Risk {
     }
 }
 
-struct StorageView: View {
-    let wide: Bool
+/// The Storage tab. Its model does nothing until the tab is first shown, and its
+/// periodic work stops when the tab goes off screen.
+final class StorageFeature: Feature {
+    let id = "storage"
+    let title = "Storage"
+    let symbol = "internaldrive"
+    private let model: StorageModel
+
+    init(model: StorageModel) { self.model = model }
+
+    func makeView() -> AnyView { AnyView(StorageView()) }
+
+    func setVisible(_ visible: Bool) {
+        if visible { model.activate() } else { model.deactivate() }
+    }
+}
+
+private struct StorageView: View {
     @Environment(StorageModel.self) private var storage
+    @Environment(\.contentWidth) private var width
+    private var wide: Bool { width >= 1000 }
 
     var body: some View {
         @Bindable var storage = storage
@@ -53,8 +71,6 @@ struct StorageView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
         }
-        .onAppear { storage.activate() }
-        .onDisappear { storage.deactivate() }
         .sheet(item: $storage.pending) { DeletionSheet(request: $0) }
         .overlay(alignment: .bottom) { MessageToast() }
     }

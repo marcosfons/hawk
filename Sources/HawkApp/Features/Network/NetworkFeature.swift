@@ -19,7 +19,16 @@ nonisolated struct NetworkRow: Identifiable, Sendable {
     let txTotal: UInt64
 }
 
-struct NetworkView: View {
+final class NetworkFeature: Feature {
+    let id = "network"
+    let title = "Network"
+    let symbol = "network"
+    var needs: Set<Need> { [.network] }
+
+    func makeView() -> AnyView { AnyView(NetworkView()) }
+}
+
+private struct NetworkView: View {
     @Environment(Monitor.self) private var monitor
     @State private var search = ""
 

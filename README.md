@@ -17,8 +17,7 @@ fans are running, which caches are safe to clear and what clearing them costs,
 and which app is using the network. It does that while costing under 5% of one
 core and about 60 MB, and shows its own cost in the header so you can check.
 
-> Early and moving fast. A menu bar mode, an Android (adb) toolkit and a light
-> security scanner are on the way.
+> Early and moving fast. The Android and Security tabs are starting points.
 
 ## What it does
 
@@ -29,9 +28,16 @@ core and about 60 MB, and shows its own cost in the header so you can check.
 | **Energy** | Energy per app over 10 minutes, an hour or since unplugging, its share of the whole Mac, and the battery time quitting it would give back. What the charger is doing. |
 | **Network** | Download and upload per process. |
 | **Storage** | Where the disk goes, what grew, what is safe to clear and what each deletion costs to get back. Simulators, DerivedData by project, Docker volumes and who uses them, WhatsApp media per chat (measured only, never deleted). |
+| **Android** | Every device adb sees (USB, Wi-Fi, emulators) with its model, Android version and battery. The start of a full adb toolkit. |
+| **Security** | Light checks: startup items (and an alert when a new one appears, even with the window closed), programs running from odd places, other programs holding your SSH key, keychain or browser cookies open. A deep scan of every running program's signature, on demand. |
 
 Plus **alerts** (low disk, memory pressure, swap growth, leaking processes, hot
-chip or battery, an app draining the battery) in the app and as notifications.
+chip or battery, an app draining the battery, a new startup item) in the app and
+as notifications.
+
+Hawk lives in the **menu bar**: the icon (with the chip temperature next to it
+if you like) opens a panel with the essentials, fan mode and recent alerts.
+Closing the window keeps Hawk running there, at a fraction of the cost.
 
 ## Install
 

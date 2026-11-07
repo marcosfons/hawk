@@ -21,7 +21,16 @@ nonisolated struct EnergyRow: Identifiable, Sendable {
     let processes: Int
 }
 
-struct EnergyView: View {
+final class EnergyFeature: Feature {
+    let id = "energy"
+    let title = "Energy"
+    let symbol = "bolt.fill"
+    var needs: Set<Need> { [.processes, .energy] }
+
+    func makeView() -> AnyView { AnyView(EnergyView()) }
+}
+
+private struct EnergyView: View {
     @Environment(Monitor.self) private var monitor
 
     var body: some View {

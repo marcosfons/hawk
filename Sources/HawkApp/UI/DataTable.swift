@@ -43,9 +43,11 @@ struct DataTable<Row: Identifiable>: NSViewRepresentable where Row.ID: Hashable 
     let rows: [Row]
     let sortKey: String
     var menu: (([Row]) -> [ContextAction?])?
+    /// Called when the user selects a row (the first selected), or clears the selection.
+    var onSelect: ((Row?) -> Void)?
 
     func makeCoordinator() -> TableCoordinator {
-        TableCoordinator(model: RowsModel(columns: columns, sortKey: sortKey, menu: menu))
+        TableCoordinator(model: RowsModel(columns: columns, sortKey: sortKey, menu: menu, onSelect: onSelect))
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -92,7 +94,10 @@ struct DataTable<Row: Identifiable>: NSViewRepresentable where Row.ID: Hashable 
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
-        (context.coordinator.model as? RowsModel<Row>)?.menu = menu
+        if let model = context.coordinator.model as? RowsModel<Row> {
+            model.menu = menu
+            model.onSelect = onSelect
+        }
         context.coordinator.update { ($0 as? RowsModel<Row>)?.all = rows }
     }
 
@@ -112,6 +117,7 @@ protocol TableModel: AnyObject {
     func ids(at rows: IndexSet) -> Set<AnyHashable>
     func rows(with ids: Set<AnyHashable>) -> IndexSet
     func actions(for rows: IndexSet) -> [ContextAction?]
+    func selected(_ rows: IndexSet)
     var hasIcons: (String) -> Bool { get }
     var isNumeric: (String) -> Bool { get }
 }
@@ -119,16 +125,18 @@ protocol TableModel: AnyObject {
 final class RowsModel<Row: Identifiable>: TableModel where Row.ID: Hashable {
     private let columns: [String: Column<Row>]
     var menu: (([Row]) -> [ContextAction?])?
+    var onSelect: ((Row?) -> Void)?
     var all: [Row] = []
     private var sorted: [Row] = []
     private var sortKey: String
     private var ascending = false
 
-    init(columns: [Column<Row>], sortKey: String, menu: (([Row]) -> [ContextAction?])?) {
+    init(columns: [Column<Row>], sortKey: String, menu: (([Row]) -> [ContextAction?])?, onSelect: ((Row?) -> Void)?) {
         self.columns = Dictionary(uniqueKeysWithValues: columns.map { ($0.id, $0) })
         self.sortKey = sortKey
         self.ascending = !(self.columns[sortKey]?.numeric ?? true)
         self.menu = menu
+        self.onSelect = onSelect
     }
 
     var count: Int { sorted.count }
@@ -168,6 +176,10 @@ final class RowsModel<Row: Identifiable>: TableModel where Row.ID: Hashable {
     func actions(for rows: IndexSet) -> [ContextAction?] {
         menu?(rows.compactMap { $0 < sorted.count ? sorted[$0] : nil }) ?? []
     }
+
+    func selected(_ rows: IndexSet) {
+        onSelect?(rows.first.flatMap { $0 < sorted.count ? sorted[$0] : nil })
+    }
 }
 
 final class TableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
@@ -175,6 +187,8 @@ final class TableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelega
     let model: TableModel
     private var scrolling = false
     private var pending = false
+    /// Set while an update restores the selection, so that is not reported as the user's.
+    private var reloading = false
     private var actions: [ContextAction] = []
 
     init(model: TableModel) { self.model = model }
@@ -207,7 +221,11 @@ final class TableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelega
             }
         }
         let keep = model.rows(with: selected)
-        if keep != table.selectedRowIndexes { table.selectRowIndexes(keep, byExtendingSelection: false) }
+        if keep != table.selectedRowIndexes {
+            reloading = true
+            table.selectRowIndexes(keep, byExtendingSelection: false)
+            reloading = false
+        }
         // A change in row count makes AppKit lay rows out again, so it gets a looser limit
         // than a steady update, which should fit in one frame.
         let ms = Double(DispatchTime.now().uptimeNanoseconds - started) / 1e6
@@ -220,6 +238,11 @@ final class TableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelega
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { model.count }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard !reloading, let table else { return }
+        model.selected(table.selectedRowIndexes)
+    }
 
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
         guard let d = tableView.sortDescriptors.first, let key = d.key else { return }
