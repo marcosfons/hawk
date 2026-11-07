@@ -18,12 +18,19 @@ struct RootView: View {
     @State private var width: CGFloat = 1000
 
     var body: some View {
+        // Every feature fills the window from the top, whatever its content's own size:
+        // otherwise a short view (an empty state) is centred, with the window's own grey
+        // above and below. The header sits in the title bar row, beside the traffic lights.
         VStack(spacing: 0) {
             HeaderBar(width: width)
             app.selected.makeView()
                 .environment(\.contentWidth, width)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .ignoresSafeArea(.container, edges: .top)
         .background(Palette.background)
+        .containerBackground(Palette.background, for: .window)
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
@@ -86,7 +93,8 @@ struct HeaderBar: View {
         .controlSize(.small)
         .padding(.leading, Metrics.titleBarInset)
         .padding(.trailing, 16)
-        .padding(.vertical, 10)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
     }
 
     private func chips(_ s: Snapshot, count: Int) -> some View {
