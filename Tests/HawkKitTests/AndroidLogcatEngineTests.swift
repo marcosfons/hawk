@@ -92,4 +92,18 @@ private func collect(_ engine: LogcatEngine, until done: @escaping (View) -> Boo
         let view = await collect(engine) { $0.ended != nil }
         #expect(view.lines.count == 1)
     }
+
+    @Test func capturedLinesAreKeptInTheDeviceFolder() async throws {
+        let fake = FakeDeviceSession()
+        fake.answer(stream: LogcatEngine.command, with: [line(0), line(1)])
+        let store = DeviceStore(root: FileManager.default.temporaryDirectory.appending(path: "hawk-tail-\(UUID().uuidString)"))
+        let engine = LogcatEngine()
+        await engine.start(fake, keepingTailIn: store)
+        _ = await collect(engine) { $0.ended != nil }
+        try await Task.sleep(for: .milliseconds(300))
+        let dir = try await store.folder(fake.id).appending(path: "logcat")
+        let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+        let text = try files.map { try String(contentsOf: $0, encoding: .utf8) }.joined()
+        #expect(text.contains("line 0") && text.contains("line 1"))
+    }
 }

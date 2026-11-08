@@ -40,7 +40,7 @@ final class LogcatModel {
         await engine.setContext(context)
         await engine.setFilter(filter)
         await engine.setPaused(paused)
-        await engine.start(session)
+        await engine.start(session, keepingTailIn: section.hub.store)
         running = true
         ended = nil
         for await update in engine.updates {
@@ -52,6 +52,15 @@ final class LogcatModel {
     }
 
     func clear() { Task { await engine?.clear() } }
+
+    /// The visible (filtered) lines as text, the way logcat prints them.
+    func exportText() async -> String {
+        let f = DateFormatter()
+        f.dateFormat = "MM-dd HH:mm:ss.SSS"
+        return await visible().map { e in
+            "\(f.string(from: Date(timeIntervalSince1970: e.time))) \(e.uid.map(String.init) ?? "-") \(e.pid) \(e.tid) \(e.level.letter) \(e.tag): \(e.message)"
+        }.joined(separator: "\n") + "\n"
+    }
 
     /// A chip was clicked: the filter changes and so does the bar's text.
     func setFilter(_ f: LogFilter) {

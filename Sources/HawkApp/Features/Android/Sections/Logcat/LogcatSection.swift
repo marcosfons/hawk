@@ -99,6 +99,20 @@ private struct LogFilterBar: View {
                 Text("Ignored: " + model.invalid.joined(separator: " ")).font(Typography.caption).foregroundStyle(Palette.hot).lineLimit(1)
             }
             Toggle("Pause", isOn: $model.paused).toggleStyle(.button)
+            Button("Export...", systemImage: "square.and.arrow.up") {
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = "logcat.txt"
+                panel.allowedContentTypes = [.plainText]
+                guard panel.runModal() == .OK, let url = panel.url else { return }
+                let model = model
+                Task {
+                    let text = await model.exportText()
+                    do { try text.write(to: url, atomically: true, encoding: .utf8) } catch {
+                        Log.app.error("Could not export logcat: \(error.localizedDescription)")
+                    }
+                }
+            }
+            .labelStyle(.iconOnly).accessibilityLabel("Export the visible lines")
             Button("Clear", systemImage: "trash") { model.clear() }.labelStyle(.iconOnly).accessibilityLabel("Clear the log")
         }
         .controlSize(.small)

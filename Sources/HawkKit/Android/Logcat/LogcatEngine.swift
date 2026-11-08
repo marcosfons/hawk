@@ -33,6 +33,13 @@ public actor LogcatEngine {
     private var pending: [LogEntry] = []
     private var pendingDropped = 0
     private var task: Task<Void, Never>?
+    /// Where captured lines are kept (the device's logcat tail), and what is waiting to go there.
+    private var tail: (store: DeviceStore, id: DeviceID)?
+    private var tailPending = Data()
+    private var tailWritten = Date.distantPast
+
+    /// The tail on disk is capped at this, oldest files first, inside the device's cap.
+    public static let tailBytes = 20 << 20
     private var flusher: Task<Void, Never>?
     public private(set) var running = false
     public private(set) var paused = false
@@ -48,8 +55,9 @@ public actor LogcatEngine {
     }
 
     /// Starts streaming. The first read is the phone's existing buffer, then live lines.
-    public func start(_ session: any DeviceSession) {
+    public func start(_ session: any DeviceSession, keepingTailIn store: DeviceStore? = nil) {
         guard task == nil else { return }
+        tail = store.map { ($0, session.id) }
         running = true
         let stream = session.stream(Self.command)
         task = Task(priority: .utility) { [weak self] in
@@ -79,6 +87,7 @@ public actor LogcatEngine {
         flusher = nil
         running = false
         partial = Data()
+        writeTail(force: true)
         Log.app.info("Logcat stopped")
     }
 
@@ -128,6 +137,7 @@ public actor LogcatEngine {
         }
         let complete = partial[partial.startIndex...lastNewline]
         partial = Data(partial[partial.index(after: lastNewline)...])
+        if tail != nil { tailPending.append(complete) }
         let text = String(decoding: complete, as: UTF8.self)
         context.now = Date().timeIntervalSince1970
         var added: [LogEntry] = []
@@ -161,10 +171,28 @@ public actor LogcatEngine {
     }
 
     private func flush() {
+        writeTail()
         guard !paused, !pending.isEmpty || pendingDropped > 0 else { return }
         continuation.yield(Update(reset: false, lines: pending, dropped: pendingDropped, total: ring.count))
         pending = []
         pendingDropped = 0
+    }
+
+    /// Captured text goes to the device's tail at most every few seconds, in one write.
+    private func writeTail(force: Bool = false) {
+        guard let tail, !tailPending.isEmpty,
+              force || tailPending.count > 256 * 1024 || Date().timeIntervalSince(tailWritten) >= 5 else { return }
+        tailWritten = Date()
+        let data = tailPending
+        tailPending = Data()
+        Task(priority: .background) {
+            do {
+                try await tail.store.append(data, to: .logcat, for: tail.id)
+                await tail.store.trim(.logcat, to: Self.tailBytes, for: tail.id)
+            } catch {
+                Log.app.warning("Could not keep the logcat tail: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func publishAll() {
@@ -178,6 +206,7 @@ public actor LogcatEngine {
 
     private func ended(_ reason: String) {
         flush()
+        writeTail(force: true)
         task = nil
         flusher?.cancel()
         flusher = nil

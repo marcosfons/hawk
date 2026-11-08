@@ -211,6 +211,17 @@ public actor DeviceStore {
         return victims
     }
 
+    /// Keeps one area under `bytes` (the logcat tail's own ~20 MB), oldest files first.
+    public func trim(_ area: StoreArea, to bytes: Int, for id: DeviceID) {
+        let files = listing(id).filter { $0.area == area }.sorted { $0.modified < $1.modified }
+        var total = files.reduce(0) { $0 + $1.size }
+        for f in files where total > bytes {
+            do { try self.files.removeItem(atPath: f.path); total -= f.size } catch {
+                Log.app.warning("Could not trim an Android store file: \(error.localizedDescription)")
+            }
+        }
+    }
+
     /// "Forget": the device's folder and everything in it.
     public func remove(_ id: DeviceID) {
         pending[id] = nil
