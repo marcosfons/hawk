@@ -42,6 +42,12 @@ interface behaviour is verified when it has only been reasoned about.
 | Target | What it is |
 |---|---|
 | `HawkKit` | Everything that measures or decides, no UI: SMC, HID sensors, sampler, processes, energy, network, alerts, fan curve, helper protocol, `Storage/`, `Android/`, `Security/`, logging |
+
+`HawkKit/Android/`: `Adb/` (finding and running adb, the server supervisor, the
+device registry, `DeviceSession` and the `AndroidHub` actor that owns them),
+`Store/` (one folder per device), `Rules/` (`AndroidRules`, `ActionLog`),
+`Overview/` (the Overview's reads and parsers). The Android tab's sections live in
+`HawkApp/Features/Android/Sections/<Name>/`, one folder per section.
 | `HawkApp` | The app, below |
 | `hawkd` | Root helper run by launchd: the only process that writes fan speeds; also reads system processes' counters |
 | `hawk` | Command-line monitor (`hawk watch`, `log`, `dump`, `set`, `auto`) |
@@ -81,7 +87,7 @@ icon generator.
    cards use `Card`; colours and fonts come from `Theme`.
 6. Add the feature to `AppModel.init`'s list. That is the only wiring.
 
-`AndroidFeature` (own periodic work, foreground only) and `SecurityFeature`
+`AndroidFeature` (a long-lived hub actor, plus a section's own periodic work, foreground only) and `SecurityFeature`
 (needs + own work with a background watch + an on-demand heavy scan) are the
 reference examples.
 

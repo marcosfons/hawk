@@ -42,13 +42,15 @@ FAKE_ENV=(--env "ADB=$PWD/tools/fake-adb" --env "ANDROID_ADB_SERVER_PORT=$FAKE_P
 # scenario NAME -> TAB (feature id), WINDOW (open|closed), SECS, WHAT, and optionally
 # ENVS (open --env pairs) and ACTION (a function run when measuring starts).
 scenario() {
-    ENVS=(); ACTION=""
+    ENVS=(); ACTION=""; XARGS=()
     case "$1" in
         baseline)   TAB=overview; WINDOW=open;   SECS=60;   WHAT="Window open on Overview" ;;
         background) TAB=overview; WINDOW=closed; SECS=60;   WHAT="Window closed, menu bar only" ;;
         soak)       TAB="${TAB:-overview}"; WINDOW=open; SECS=1800; WHAT="Soak with the window open on $TAB, footprint every minute, leaks at the end" ;;
         android-closed) TAB=overview; WINDOW=open; SECS=60; WHAT="Window open on Overview, Android tab closed, adb running, device connected" ;;
         # Fake adb on a spare port (tools/fake-adb): the real server and the phone are never touched.
+        android-overview) TAB=android; WINDOW=open; SECS=60; XARGS=(-androidSection overview)
+                    WHAT="Android tab open on Overview, phone on USB: one shell batch every 3 s" ;;
         adb-down)   TAB=android; WINDOW=open; SECS=60; ENVS=("${FAKE_ENV[@]}" --env FAKE_ADB_FAIL=1)
                     WHAT="Android tab open, adb cannot start (fake adb): backoff, then failing with 60 s retries" ;;
         adb-restart) TAB=overview; WINDOW=closed; SECS=30; ENVS=("${FAKE_ENV[@]}"); ACTION=kill_fake_server
@@ -64,6 +66,7 @@ baseline     window open on Overview, 60 s
 background   window closed (menu bar only), 60 s
 soak         window open (TAB=<feature id>, default overview), 30 min, leaks
 android-closed  window open on Overview, adb running, device connected, 60 s
+android-overview  Android tab on a device's Overview, phone on USB, 60 s (phone CPU matters)
 adb-down     Android tab open, adb failing to start (fake adb, port 5099), 60 s
 adb-restart  window closed, fake adb server killed as measuring starts, 30 s of recovery
 
@@ -134,7 +137,7 @@ trap 'exit 130' INT TERM
     --predicate 'subsystem == "com.marcos.Hawk" AND category == "app"' >"$TMP/log" 2>/dev/null & LOGSTREAM=$!
 sleep 1
 
-ARGS=(-feature "$TAB")
+ARGS=(-feature "$TAB" ${XARGS[@]+"${XARGS[@]}"})
 [ "$WINDOW" = closed ] && ARGS+=(-startInMenuBar YES)
 echo "perf: $NAME - $WHAT (commit $COMMIT)"
 open -n -g ${ENVS[@]+"${ENVS[@]}"} "$APP" --args "${ARGS[@]}" || die "could not open $APP"

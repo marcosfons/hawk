@@ -30,7 +30,7 @@ public actor AndroidHub {
     private var listeners: [Task<Void, Never>] = []
     private var lastSnapshot: Snapshot?
     /// Where known devices and their events are kept; nil keeps nothing (tests).
-    public let store: DeviceStore?
+    public nonisolated let store: DeviceStore?
     private var saved: [DeviceID: Device] = [:]
     /// The newest event written per device (lists are capped, so counts stop changing).
     private var savedEvents: [DeviceID: DeviceEvent] = [:]
