@@ -8,6 +8,7 @@
 //  colour means one thing across the window.
 //
 
+import AppKit
 import SwiftUI
 
 enum Palette {
@@ -42,6 +43,19 @@ enum Palette {
     static let good = Color(red: 0.30, green: 0.85, blue: 0.50)
     static let warn = Color(red: 1.0, green: 0.75, blue: 0.25)
     static let hot = Color(red: 1.0, green: 0.36, blue: 0.36)
+
+    // Logcat (Android plan C): levels readable on the dark body, and a stable colour per app.
+    static let logVerbose = NSColor(white: 1, alpha: 0.38)
+    static let logDebug = NSColor(red: 0.56, green: 0.69, blue: 0.92, alpha: 1)
+    static let logInfo = NSColor(white: 1, alpha: 0.88)
+    static let logWarn = NSColor(red: 1.0, green: 0.75, blue: 0.25, alpha: 1)
+    static let logError = NSColor(red: 1.0, green: 0.42, blue: 0.42, alpha: 1)
+    static let logApps: [NSColor] = [
+        NSColor(red: 0.36, green: 0.62, blue: 1.0, alpha: 1), NSColor(red: 0.25, green: 0.85, blue: 0.75, alpha: 1),
+        NSColor(red: 0.72, green: 0.52, blue: 1.0, alpha: 1), NSColor(red: 1.0, green: 0.55, blue: 0.25, alpha: 1),
+        NSColor(red: 1.0, green: 0.45, blue: 0.65, alpha: 1), NSColor(red: 0.45, green: 0.85, blue: 0.42, alpha: 1),
+        NSColor(red: 1.0, green: 0.82, blue: 0.30, alpha: 1), NSColor(red: 0.30, green: 0.78, blue: 1.0, alpha: 1),
+    ]
 
     /// Low to high load or heat.
     static let heatGradient = Gradient(colors: [good, warn, hot])
