@@ -59,3 +59,12 @@ the same kind), so differences smaller than that are noise, not regressions.
 | 2026-11-07 | M4 | background (window closed, adb watch open, phone on USB) | 2.13% | 35 MB | 2.14 | 170 | 0.0% |
 | 2026-11-07 | M4 | adb-down (Android tab, backoff 2-5-10-30 s, then failing) | 2.44% | 39 MB | 2.44 | 222 | 0.1% |
 | 2026-11-07 | M4 | adb-restart (window open, server killed, re-attached within 2 s) | 2.03% | 37 MB | 2.04 | 204 | 0.0% |
+| 2026-11-07 | M8 | baseline (window open, Overview tab) | 2.29% | 35 MB | 2.31 | 169 | 0.1% |
+| 2026-11-07 | M8 | android-closed (Overview tab, adb attached, phone on USB) | 2.23% | 35 MB | 2.24 | 143 | 0.1% |
+| 2026-11-07 | M8 | android-overview (Android tab on Overview, batch every 3 s) | 2.25% | 45 MB | 2.26 | 249 | see below |
+| 2026-11-07 | M8 | adb-down (Android tab, fake adb failing) | 2.26% | 45 MB | 2.27 | 219 | 0.1% |
+
+The phone's `top` reads 0.1% for android-overview, but it only counts processes
+alive at both of its samples and misses the short-lived `dumpsys` runs. From
+per-command measurements the Overview schedule costs about 1.6% of a core;
+`tools/perf.sh` is to read adbd's cumulative CPU (children included) instead.
