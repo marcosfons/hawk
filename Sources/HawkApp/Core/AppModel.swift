@@ -51,7 +51,7 @@ final class AppModel {
             EnergyFeature(),
             NetworkFeature(),
             StorageFeature(model: storage),
-            AndroidFeature(),
+            AndroidFeature(monitor: monitor),
             SecurityFeature(monitor: monitor),
         ]
         selectedID = defaults.string(forKey: "feature") ?? "overview"

@@ -25,9 +25,17 @@ public struct FanAlert: Sendable, Identifiable, Equatable {
     public let title: String
     public let body: String
     public let date: Date
+    /// What raised it: the Mac (fans, temperature, memory...) or an Android device.
+    public var kind: Kind = .mac
 
-    public init(key: String, title: String, body: String, date: Date = Date()) {
-        self.key = key; self.title = title; self.body = body; self.date = date
+    public enum Kind: Sendable, Equatable {
+        case mac
+        case androidANR
+        case androidCrash
+    }
+
+    public init(key: String, title: String, body: String, date: Date = Date(), kind: Kind = .mac) {
+        self.key = key; self.title = title; self.body = body; self.date = date; self.kind = kind
     }
 }
 

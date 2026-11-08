@@ -37,14 +37,27 @@ final class AndroidFeature: Feature {
     }
 
     @ObservationIgnored let hub = AndroidHub()
+    /// Catches ANRs and crashes from the DropBox, window open or not (plan C).
+    @ObservationIgnored let crashes: CrashWatcher
+    @ObservationIgnored private var liveIDs: Set<DeviceID> = []
     @ObservationIgnored let overview: OverviewModel
     @ObservationIgnored private let defaults = UserDefaults.standard
     /// The tab is on screen (window open and visible); sections stop their work otherwise.
     private(set) var visible = false
 
-    init() {
+    init(monitor: Monitor) {
         let hub = hub
         overview = OverviewModel(hub: hub)
+        crashes = CrashWatcher(hub: hub)
+        let crashes = crashes
+        Task {
+            for await alert in crashes.alerts {
+                let r = alert.record
+                let app = r.package ?? r.process ?? "an app"
+                monitor.post(FanAlert(key: "android-\(r.kind.rawValue)-\(r.key)", title: "\(r.kind.title) on \(alert.deviceName): \(app)",
+                                      body: r.reason, date: r.date, kind: r.kind == .anr ? .androidANR : .androidCrash))
+            }
+        }
         section = UserDefaults.standard.string(forKey: "androidSection").flatMap(AndroidSection.init) ?? .overview
         selectedDevice = UserDefaults.standard.string(forKey: "androidDevice").map(DeviceID.init)
         overview.device = selectedDevice
@@ -88,6 +101,12 @@ final class AndroidFeature: Feature {
             selectedDevice = new.devices.first(where: \.isConnected)?.id ?? new.devices.first?.id
         }
         overview.deviceChanged(device)
+        let live = Set(new.devices.filter { $0.state == .device }.map(\.id))
+        if live != liveIDs {
+            liveIDs = live
+            let devices = new.devices, crashes = crashes
+            Task { await crashes.setLive(devices) }
+        }
         updateVisibility()
     }
 
