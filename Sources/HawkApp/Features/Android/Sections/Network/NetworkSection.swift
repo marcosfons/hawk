@@ -19,13 +19,20 @@ struct NetworkSection: View {
     @State private var tunnels: [Tunnel] = []
     @State private var saved: [Tunnel] = []
     @State private var status: String?
+    @State private var hotspot: [String]?
+    @State private var wifi: [SavedWifi] = []
+    @State private var authorities: [String] = []
+    @State private var history: UsageHistory?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.spacing) {
             if let status { Text(status).font(Typography.small).foregroundStyle(Palette.secondary) }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: Metrics.minCardWidth), spacing: Metrics.spacing, alignment: .top)],
                       alignment: .leading, spacing: Metrics.spacing) {
-                ConfigCard(config: config)
+                ConfigCard(config: config, hotspot: hotspot)
+                DataCard(history: history)
+                WifiCard(networks: wifi, live: context.isLive, add: addWifi)
+                CertificatesCard(authorities: authorities)
                 TunnelsCard(tunnels: tunnels, saved: saved, live: context.isLive, add: add, remove: remove)
             }
             Card(title: "Open connections (\(connections.count))", symbol: "point.3.connected.trianglepath.dotted") {
@@ -35,13 +42,23 @@ struct NetworkSection: View {
         }
         .task(id: Key(device: context.device.id, live: context.isLive, shown: context.shown)) {
             saved = await SavedTunnels.load(context.device.id, store: context.hub.store)
+            history = await context.hub.store?.load(UsageHistory.self, "usage.json", for: context.device.id)
             guard context.isLive, context.shown, let session = try? await context.hub.session(for: context.device.id) else { return }
             if let index = await context.hub.packages(for: context.device.id) {
                 var names: [Int: String] = [:]
                 for p in index.packages.values { if let uid = p.uid { names[uid] = p.label ?? p.name } }
                 apps = names
             }
-            if let parts = try? await session.shellBatch(NetworkConfig.parts, timeout: .seconds(10)) { config = NetworkConfig.parse(parts) }
+            var parts = NetworkConfig.parts
+            parts["tether"] = Tethering.command
+            parts["wifi"] = SavedWifi.command
+            parts["ca"] = CAStore.command
+            if let out = try? await session.shellBatch(parts, timeout: .seconds(15)) {
+                config = NetworkConfig.parse(out)
+                hotspot = Tethering.tetheredInterfaces(out["tether"] ?? "")
+                wifi = SavedWifi.parse(out["wifi"] ?? "")
+                authorities = CAStore.parse(out["ca"] ?? "")
+            }
             await loadTunnels(session)
             while !Task.isCancelled {
                 if let out = try? await session.shell(Connection.command, timeout: .seconds(10)) {
@@ -91,6 +108,25 @@ struct NetworkSection: View {
         }
     }
 
+    /// Adds a network on the phone; the passphrase is used for this one command only.
+    private func addWifi(_ ssid: String, _ security: String, _ passphrase: String?) {
+        Task {
+            guard let command = SavedWifi.addCommand(ssid: ssid, security: security, passphrase: passphrase),
+                  let session = try? await context.hub.session(for: context.device.id) else {
+                status = "Check the name, the security and the password (8 to 63 characters)"
+                return
+            }
+            let out = try? await session.shell(command, timeout: .seconds(15))
+            let ok = out?.status == 0 && !(out?.stdout.lowercased().contains("error") ?? true)
+            status = ok ? "Added \(ssid) on the phone" : "Could not add \(ssid)"
+            if let store = context.hub.store {
+                try? await ActionLog.append(device: context.device.name, action: .change("Wi-Fi network added: \(ssid)"),
+                                            result: ok ? .done : .failed("cmd wifi refused it"), id: context.device.id, store: store)
+            }
+            if let list = try? await session.shell(SavedWifi.command, timeout: .seconds(10)) { wifi = SavedWifi.parse(list.stdout) }
+        }
+    }
+
     private func remove(_ t: Tunnel) {
         Task {
             guard let session = try? await context.hub.session(for: context.device.id) else { return }
@@ -104,6 +140,7 @@ struct NetworkSection: View {
 
 private struct ConfigCard: View {
     let config: NetworkConfig?
+    let hotspot: [String]?
 
     var body: some View {
         Card(title: "Configuration", symbol: "gearshape.2") {
@@ -111,6 +148,7 @@ private struct ConfigCard: View {
                 row("Private DNS", config?.privateDNS)
                 row("Proxy", config.map { $0.proxy ?? "None" })
                 row("VPN", config.map { $0.vpn ? "Connected" : "None" })
+                row("Hotspot", hotspot.map { $0.isEmpty ? "Off" : "On (\($0.joined(separator: ", ")))" })
                 ForEach(config?.interfaces ?? [], id: \.name) { i in row(i.name, i.addresses.joined(separator: ", ")) }
             }
             if let routes = config?.routes, !routes.isEmpty {
@@ -169,6 +207,104 @@ private struct TunnelsCard: View {
             }
             .textFieldStyle(.roundedBorder).controlSize(.small)
             Text("Kept tunnels are recreated when the device comes back.").font(Typography.caption).foregroundStyle(Palette.tertiary)
+        }
+    }
+}
+
+private struct DataCard: View {
+    let history: UsageHistory?
+
+    var body: some View {
+        Card(title: "Data used", symbol: "arrow.up.arrow.down") {
+            if let history, !history.days.isEmpty {
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 5) {
+                    GridRow {
+                        Text("").gridColumnAlignment(.trailing)
+                        Text("Wi-Fi"); Text("Mobile"); Text("Hotspot")
+                    }
+                    .font(Typography.caption).foregroundStyle(Palette.tertiary)
+                    ForEach([(1, "Today"), (7, "7 days"), (30, "30 days")], id: \.0) { days, label in
+                        let t = DeviceDataTotals.totals(history, days: days)
+                        GridRow {
+                            Text(label).font(Typography.caption).foregroundStyle(Palette.tertiary)
+                            Text(Format.bytes(Double(t.wifi))); Text(Format.bytes(Double(t.mobile))); Text(Format.bytes(Double(t.hotspot)))
+                        }
+                        .font(Typography.small)
+                    }
+                }
+            } else {
+                Text("Open Usage per app once to read the history.").font(Typography.small).foregroundStyle(Palette.secondary)
+            }
+        }
+    }
+}
+
+private struct WifiCard: View {
+    let networks: [SavedWifi]
+    let live: Bool
+    let add: (String, String, String?) -> Void
+    @State private var macNetworks: [String] = []
+    @State private var ssid = ""
+    @State private var security = "wpa2"
+    @State private var password = ""
+
+    var body: some View {
+        Card(title: "Wi-Fi networks on the phone", symbol: "wifi") {
+            ForEach(networks) { n in
+                HStack {
+                    Text(n.ssid).font(Typography.small)
+                    Spacer()
+                    Text(n.security).font(Typography.caption).foregroundStyle(Palette.secondary)
+                }
+            }
+            if networks.isEmpty { Text("None listed.").font(Typography.small).foregroundStyle(Palette.secondary) }
+            Divider()
+            HStack {
+                Menu("From this Mac") {
+                    ForEach(macNetworks, id: \.self) { name in
+                        Button(name) {
+                            Task {
+                                // macOS asks before giving the password; it is used once and forgotten.
+                                let pass = await MacWifi.password(for: name)
+                                add(name, pass == nil ? "open" : "wpa2", pass)
+                            }
+                        }
+                    }
+                }
+                .fixedSize()
+                .disabled(!live || macNetworks.isEmpty)
+                TextField("Network name", text: $ssid).frame(width: 140)
+                Picker("", selection: $security) {
+                    ForEach(["wpa2", "wpa3", "open"], id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden().fixedSize()
+                SecureField("Password", text: $password).frame(width: 120)
+                Button("Add") {
+                    add(ssid, security, security == "open" ? nil : password)
+                    password = ""
+                }
+                .disabled(!live || ssid.isEmpty)
+            }
+            .textFieldStyle(.roundedBorder).controlSize(.small)
+        }
+        .task { macNetworks = await MacWifi.savedNetworks() }
+    }
+}
+
+private struct CertificatesCard: View {
+    let authorities: [String]
+
+    var body: some View {
+        Card(title: "Trusted certificates", symbol: "checkmark.shield") {
+            Text("\(authorities.count) system authorities. Certificates a user added are readable only with root.")
+                .font(Typography.small).foregroundStyle(Palette.secondary)
+            if !authorities.isEmpty {
+                DisclosureGroup("List") {
+                    Text(authorities.joined(separator: "\n")).font(.system(size: 11)).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(Typography.small)
+            }
         }
     }
 }
