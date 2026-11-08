@@ -16,6 +16,7 @@ make install                 # ~/Applications/Hawk.app + ~/.local/bin/hawk
 make && sudo make install-helper   # root helper (fan control, system process figures)
 make log-live                # stream logs, debug timings included
 make problems                # warnings and errors kept in ~/Library/Logs/Hawk/hawk.log
+make perf SCENARIO=baseline  # CPU, memory, energy, busy threads of a release build (tools/perf.sh list)
 make icon                    # redraw Support/AppIcon.iconset from tools/make-icon.swift
 ```
 

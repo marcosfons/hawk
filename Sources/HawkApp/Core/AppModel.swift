@@ -34,6 +34,9 @@ final class AppModel {
     @ObservationIgnored private var windowVisible = true
     @ObservationIgnored private var menuOpen = false
     @ObservationIgnored private let defaults = UserDefaults.standard
+    /// `-startInMenuBar YES` on the command line: the first window closes as soon as it
+    /// opens, so `tools/perf.sh` can measure the menu-bar-only state unattended.
+    @ObservationIgnored private var startsInMenuBar = UserDefaults.standard.bool(forKey: "startInMenuBar")
 
     init() {
         let monitor = Monitor()
@@ -61,6 +64,12 @@ final class AppModel {
     }
 
     var selected: any Feature { features.first { $0.id == selectedID } ?? features[0] }
+
+    /// True once, for the first window, when Hawk was launched to start in the menu bar.
+    func takeStartInMenuBar() -> Bool {
+        defer { startsInMenuBar = false }
+        return startsInMenuBar
+    }
 
     func windowAppeared() {
         windowOpen = true
@@ -97,6 +106,8 @@ final class AppModel {
         let visible = NSApp.windows.contains { $0.identifier?.rawValue.hasPrefix("main") == true && $0.isVisible && $0.occlusionState.contains(.visible) }
         guard visible != windowVisible else { return }
         windowVisible = visible
+        // tools/perf.sh watches for this: a covered window measures as background.
+        Log.app.info("Window \(visible ? "visible" : "hidden")")
         updateVisibility()
     }
 

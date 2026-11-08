@@ -11,6 +11,7 @@
 #   make log-live               stream everything as it happens, debug timings included
 #   make problems               warnings and errors kept in ~/Library/Logs/Hawk/hawk.log
 #   make icon                   redraw the app icon (Support/AppIcon.iconset)
+#   make perf SCENARIO=name     build, then measure CPU, memory, energy, threads (tools/perf.sh list)
 #
 # Build as yourself first; install-helper only copies the already built binary,
 # so nothing under .build is ever owned by root.
@@ -24,7 +25,7 @@ HELPER_LABEL = com.marcos.hawkd
 HELPER_BIN   = /Library/PrivilegedHelperTools/$(HELPER_LABEL)
 HELPER_PLIST = /Library/LaunchDaemons/$(HELPER_LABEL).plist
 
-.PHONY: all build app install run install-helper uninstall-helper test check log log-live problems icon clean
+.PHONY: all build app install run install-helper uninstall-helper test check perf log log-live problems icon clean
 
 all: app
 
@@ -71,6 +72,10 @@ test:
 check:
 	swift build -c release -Xswiftc -warnings-as-errors --quiet
 	swift test --quiet
+
+perf: app
+	@test -n "$(SCENARIO)" || { echo "usage: make perf SCENARIO=<name>"; tools/perf.sh list; exit 2; }
+	tools/perf.sh $(SCENARIO)
 
 log:
 	@/usr/bin/log show --last 1h --style compact --info --debug \

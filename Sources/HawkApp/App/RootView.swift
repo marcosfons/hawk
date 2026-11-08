@@ -13,6 +13,7 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.dismissWindow) private var dismissWindow
     /// Measured once per resize; layouts choose from it instead of ViewThatFits,
     /// which would measure every alternative on each update.
     @State private var width: CGFloat = 1000
@@ -37,6 +38,7 @@ struct RootView: View {
         .onAppear {
             NSApp.setActivationPolicy(.regular)
             app.windowAppeared()
+            if app.takeStartInMenuBar() { dismissWindow(id: "main") }
         }
         .onDisappear {
             // No window, no Dock icon: Hawk lives in the menu bar until reopened.
