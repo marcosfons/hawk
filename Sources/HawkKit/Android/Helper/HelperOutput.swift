@@ -33,6 +33,15 @@ public struct NetRecord: Sendable, Equatable, Codable {
     public let foreground: Bool
     public let rx: Int64
     public let tx: Int64
+
+    public init(transport: Transport, windowStart: Date, uid: Int, foreground: Bool, rx: Int64, tx: Int64) {
+        self.transport = transport
+        self.windowStart = windowStart
+        self.uid = uid
+        self.foreground = foreground
+        self.rx = rx
+        self.tx = tx
+    }
 }
 
 /// Everything one helper run printed, parsed. Output is untrusted: lines, fields and
