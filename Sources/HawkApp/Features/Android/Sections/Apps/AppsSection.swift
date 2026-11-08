@@ -32,7 +32,7 @@ struct AppsSection: View {
         let model = model, context = context
         return DataTable(columns: columns, rows: model.shown, sortKey: "label", menu: actions, onSelect: nil)
             .tableCard()
-            .frame(minHeight: 420)
+            .frame(minHeight: 260, maxHeight: .infinity)
             // Drop .apk files on the list to install them.
             .dropDestination(for: URL.self) { urls, _ in
                 guard context.isLive, !urls.isEmpty else { return false }

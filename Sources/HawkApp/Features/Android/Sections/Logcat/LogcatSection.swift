@@ -21,17 +21,17 @@ struct LogcatSection: View {
             LogFilterBar(model: model)
             LogTable(rows: model.rows, version: model.version, app: model.appName,
                      onSelect: { model.selected = $0 }, menu: menu)
-                .frame(minHeight: 380)
+                .frame(minHeight: 200, maxHeight: .infinity)
                 .background(RoundedRectangle(cornerRadius: Metrics.cardRadius).fill(Palette.card))
             if let e = model.selected { LogDetail(entry: e, group: model.rows.filter { $0.group != nil && $0.group == e.group }) }
         }
-        .task(id: Key(device: context.device.id, live: context.isLive, shown: context.shown)) {
+        .task(id: Key(device: context.device.id, live: context.isLive, shown: context.shown, capacity: model.capacity)) {
             guard context.isLive, context.shown else { return }
             await model.run(context)
         }
     }
 
-    private struct Key: Equatable { let device: DeviceID; let live: Bool; let shown: Bool }
+    private struct Key: Equatable { let device: DeviceID; let live: Bool; let shown: Bool; let capacity: Int }
 
     private func menu(_ e: LogEntry) -> [ContextAction?] {
         let model = model
@@ -98,6 +98,14 @@ private struct LogFilterBar: View {
             if !model.invalid.isEmpty {
                 Text("Ignored: " + model.invalid.joined(separator: " ")).font(Typography.caption).foregroundStyle(Palette.hot).lineLimit(1)
             }
+            Picker("Keep", selection: $model.capacity) {
+                // About 0.4 KB per line in memory.
+                ForEach(LogcatModel.capacities, id: \.self) { n in
+                    Text("\(n / 1000)k lines (~\(n * 4 / 10_000) MB)").tag(n)
+                }
+            }
+            .fixedSize()
+            .help("How many lines Hawk keeps in memory; changing it reads the log again")
             Toggle("Pause", isOn: $model.paused).toggleStyle(.button)
             Button("Export...", systemImage: "square.and.arrow.up") {
                 let panel = NSSavePanel()

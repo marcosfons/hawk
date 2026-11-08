@@ -35,6 +35,9 @@ enum AndroidSection: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Pages built around one long table: they fill the height instead of scrolling.
+    var fillsHeight: Bool { [.logcat, .crashes, .apps, .usage].contains(self) }
+
     var symbol: String {
         switch self {
         case .overview: "info.circle"
@@ -81,7 +84,12 @@ struct SectionHost: View {
                            ? "Unauthorized: accept the debugging prompt on the phone. If it never appears, revoke USB debugging authorizations in Developer options and plug in again."
                            : "The device is \(state.word); Hawk can talk to it once it is ready.")
                 }
-                ScrollView { section(SectionContext(device: device, events: feature.snapshot.events[device.id] ?? [], hub: feature.hub, shown: feature.visible)) }
+                let context = SectionContext(device: device, events: feature.snapshot.events[device.id] ?? [], hub: feature.hub, shown: feature.visible)
+                if feature.section.fillsHeight {
+                    section(context).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                } else {
+                    ScrollView { section(context) }
+                }
             }
         } else {
             ContentUnavailableView("No device", systemImage: "cable.connector",

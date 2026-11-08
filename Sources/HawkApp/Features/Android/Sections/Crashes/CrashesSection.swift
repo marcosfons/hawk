@@ -26,7 +26,7 @@ struct CrashesSection: View {
                 CountsCard(log: log)
                 DataTable(columns: Self.columns, rows: log.records, sortKey: "date", menu: nil, onSelect: { selected = $0 })
                     .tableCard()
-                    .frame(minHeight: 260)
+                    .frame(minHeight: 200, maxHeight: .infinity)
                 if let r = selected { CrashDetail(record: r) }
             }
         }

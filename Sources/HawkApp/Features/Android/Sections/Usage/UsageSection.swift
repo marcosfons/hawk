@@ -20,7 +20,7 @@ struct UsageSection: View {
             if let status = model.status { Text(status).font(Typography.small).foregroundStyle(Palette.secondary) }
             DataTable(columns: Self.columns, rows: model.rows, sortKey: "battery", menu: nil, onSelect: nil)
                 .tableCard()
-                .frame(minHeight: 420)
+                .frame(minHeight: 260, maxHeight: .infinity)
         }
         .task(id: Key(device: context.device.id, live: context.isLive, shown: context.shown)) {
             await model.load(context)

@@ -23,6 +23,16 @@ final class LogcatModel {
     var selected: LogEntry?
     var paused = false { didSet { if paused != oldValue { let p = paused; Task { await engine?.setPaused(p) } } } }
     var filterText = "" { didSet { if filterText != oldValue { scheduleFilter() } } }
+    /// Lines kept in memory (about 0.4 KB each); changing it restarts the stream.
+    var capacity = LogcatModel.savedCapacity {
+        didSet { if capacity != oldValue { UserDefaults.standard.set(capacity, forKey: "logcatCapacity") } }
+    }
+
+    static let capacities = [50_000, 100_000, 200_000, 500_000]
+    static var savedCapacity: Int {
+        let saved = UserDefaults.standard.integer(forKey: "logcatCapacity")
+        return capacities.contains(saved) ? saved : 100_000
+    }
 
     @ObservationIgnored private var engine: LogcatEngine?
     @ObservationIgnored private var filterTask: Task<Void, Never>?
@@ -35,7 +45,7 @@ final class LogcatModel {
     func run(_ section: SectionContext) async {
         await loadPackages(section)
         guard let session = try? await section.hub.session(for: section.device.id) else { return }
-        let engine = LogcatEngine()
+        let engine = LogcatEngine(capacity: capacity)
         self.engine = engine
         await engine.setContext(context)
         await engine.setFilter(filter)
