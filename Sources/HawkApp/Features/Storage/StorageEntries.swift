@@ -257,7 +257,7 @@ private struct ChildrenTable: View {
                 RightText(r.lastUsed == .distantPast ? "-" : Format.ago(r.lastUsed), color: Palette.secondary)
             }
             .width(72)
-            TableColumn("") { r in ChildAction(entry: entry, child: r.child) }
+            TableColumn("") { r in ChildAction(storage: storage, entry: entry, child: r.child) }
                 .width(26)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
@@ -273,10 +273,15 @@ private struct ChildrenTable: View {
 
 /// Delete, or a lock saying why not. Simulator runtimes live on system disk images and
 /// go through simctl, so for them the button copies that command instead.
+///
+/// Takes the model as a parameter, never from the environment: Table cells are AppKit
+/// rows with their own hosting views, and a row removed by a delete is laid out once
+/// more after it has left the table, with no environment. An @Environment read there
+/// is a fatal "No Observable object" crash.
 private struct ChildAction: View {
+    let storage: StorageModel
     let entry: StorageEntry
     let child: StorageEntry.Child
-    @Environment(StorageModel.self) private var storage
 
     var body: some View {
         if !child.path.hasPrefix("/"), let identifier = child.identifier {

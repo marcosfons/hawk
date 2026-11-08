@@ -71,7 +71,7 @@ private struct StorageView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
         }
-        .sheet(item: $storage.pending) { DeletionSheet(request: $0) }
+        .sheet(item: $storage.pending) { DeletionSheet(request: $0).environment(storage) }
         .overlay(alignment: .bottom) { MessageToast() }
     }
 

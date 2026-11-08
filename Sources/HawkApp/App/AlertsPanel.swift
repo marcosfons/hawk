@@ -22,7 +22,7 @@ struct AlertsButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(monitor.unseenAlerts > 0 ? "\(monitor.unseenAlerts) new alerts" : "Alerts")
-        .popover(isPresented: $shown, arrowEdge: .bottom) { AlertsPanel().frame(width: 420) }
+        .popover(isPresented: $shown, arrowEdge: .bottom) { AlertsPanel().frame(width: 420).environment(monitor) }
     }
 }
 
