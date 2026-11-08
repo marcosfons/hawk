@@ -21,6 +21,8 @@ public enum AdbError: Error, Sendable, Equatable {
     case closed
     /// The runner gave up waiting.
     case timeout
+    /// The device already has as many long-lived streams as allowed.
+    case tooManyStreams
     /// Anything else, shown to the user as it is (capped).
     case commandFailed(status: Int32, stderr: String)
 
@@ -71,6 +73,7 @@ public enum AdbError: Error, Sendable, Equatable {
         case .unauthorized: "Device unauthorized: accept the prompt on the phone"
         case .closed: "Connection to the device closed"
         case .timeout: "adb did not answer in time"
+        case .tooManyStreams: "Too many streams open on this device"
         case .commandFailed(let status, let stderr): stderr.isEmpty ? "Exit status \(status)" : stderr
         }
     }

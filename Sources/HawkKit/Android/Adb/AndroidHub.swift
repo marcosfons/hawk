@@ -1,0 +1,214 @@
+import Foundation
+
+/// The one place that knows about devices: it owns the adb server supervisor, the
+/// device registry, the call slots and the Wi-Fi reconnect schedule, and hands out
+/// `DeviceSession`s. The interface only reads its finished snapshots.
+///
+/// With the Android tab closed it runs nothing of its own: the server's device watch
+/// (idle until something changes) wakes it, plus a timer only while a restart grace
+/// or a first-minute Wi-Fi reconnect is pending.
+public actor AndroidHub {
+    public struct Snapshot: Sendable, Equatable {
+        /// Connected first, then most recently seen.
+        public var devices: [Device] = []
+        public var events: [DeviceID: [DeviceEvent]] = [:]
+        public var server = AdbServer.Status()
+        public init() {}
+    }
+
+    public nonisolated let snapshots: AsyncStream<Snapshot>
+    public let server: AdbServer
+
+    private let continuation: AsyncStream<Snapshot>.Continuation
+    private var registry: DeviceRegistry
+    private var reconnect = WirelessReconnect()
+    private let slots = AdbSlots()
+    private var serverStatus = AdbServer.Status()
+    private var resolving: Set<String> = []
+    private var tabOpen = false
+    private var timer: Task<Void, Never>?
+    private var listeners: [Task<Void, Never>] = []
+    private var lastSnapshot: Snapshot?
+
+    public init(server: AdbServer = AdbServer(), devices: [Device] = [], events: [DeviceID: [DeviceEvent]] = [:]) {
+        self.server = server
+        registry = DeviceRegistry(devices: devices, events: events)
+        (snapshots, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+    }
+
+    /// Once, at launch: start supervising adb and listening to it.
+    public func start() async {
+        guard listeners.isEmpty else { return }
+        let server = server
+        listeners = [
+            Task(priority: .utility) { [weak self] in
+                for await status in server.statusUpdates { await self?.serverChanged(status) }
+            },
+            Task(priority: .utility) { [weak self] in
+                for await list in server.deviceLists { await self?.received(list) }
+            },
+        ]
+        publish()
+        await server.launch()
+    }
+
+    public func setTabVisible(_ open: Bool) async {
+        tabOpen = open
+        await server.setTabVisible(open)
+        scheduleTimer()
+    }
+
+    /// A session for this device; its calls fail fast while it is not usable.
+    public func session(for id: DeviceID) async throws -> any DeviceSession {
+        guard let adb = await server.process() else { throw AdbError.notInstalled }
+        let server = server
+        return AdbDeviceSession(id: id, adb: adb, slots: slots,
+                                serial: { [weak self] in await self?.preferredSerial(id) },
+                                timedOut: { await server.reportTimeout() })
+    }
+
+    public func preferredSerial(_ id: DeviceID) -> String? { registry.preferredSerial(for: id) }
+
+    public func setNickname(_ name: String?, for id: DeviceID) {
+        registry.setNickname(name, for: id)
+        publish()
+    }
+
+    @discardableResult
+    public func forget(_ id: DeviceID) -> Bool {
+        guard registry.forget(id) else { return false }
+        reconnect.cancel(id)
+        publish()
+        return true
+    }
+
+    // MARK: -
+
+    private var now: Date { Date() }
+
+    private func received(_ list: [AdbDeviceLine]) {
+        // The first list can arrive before the "running" status (two streams), and the
+        // watch sends again only on a change, so lists are taken whatever the status;
+        // only a late one after the user stopped the server is ignored.
+        guard serverStatus.state != .stopped(byUser: true) else { return }
+        handle(registry.apply(list, now: now))
+        resolveIdentities()
+    }
+
+    private func serverChanged(_ status: AdbServer.Status) {
+        let wasRunning: Bool
+        if case .running = serverStatus.state { wasRunning = true } else { wasRunning = false }
+        serverStatus = status
+        if wasRunning, !Self.isRunning(status.state) {
+            handle(registry.serverWentDown(expectBack: status.state != .stopped(byUser: true), now: now))
+        }
+        publish()
+    }
+
+    private static func isRunning(_ state: ServerPolicy.State) -> Bool {
+        if case .running = state { return true }
+        return false
+    }
+
+    private func handle(_ events: [DeviceEvent]) {
+        let t = now.timeIntervalSinceReferenceDate
+        for e in events {
+            switch e.kind {
+            case .disconnected:
+                if registry.devices[e.device]?.wirelessPaired == true { reconnect.lost(e.device, now: t) }
+            case .connected, .transportAdded:
+                reconnect.cancel(e.device)
+            default:
+                break
+            }
+            Log.app.info("Android device: \(e.summary)")
+        }
+        publish()
+        scheduleTimer()
+    }
+
+    /// One `getprop ro.serialno` per new usable transport, through the call slots.
+    private func resolveIdentities() {
+        let todo = registry.needsIdentity.subtracting(resolving)
+        guard !todo.isEmpty else { return }
+        resolving.formUnion(todo)
+        let server = server, slots = slots
+        for serial in todo {
+            Task(priority: .utility) { [weak self] in
+                var found: String?
+                if let adb = await server.process(), ShellQuote.isSerial(serial) {
+                    let key = DeviceID(serial)
+                    if (try? await slots.acquire(key)) != nil {
+                        let out = try? await adb.run(["-s", serial, "shell", "getprop ro.serialno"], timeout: .seconds(5))
+                        await slots.release(key)
+                        if let out, out.status == 0 { found = Self.serialNumber(out.text) }
+                    }
+                }
+                await self?.resolved(serial, found)
+            }
+        }
+    }
+
+    /// `ro.serialno` as printed, or nil if it is not a plausible one (then the
+    /// transport keeps its guessed identity).
+    static func serialNumber(_ output: String) -> String? {
+        let s = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty, s.count <= 64, ShellQuote.isSerial(s) else { return nil }
+        return s
+    }
+
+    private func resolved(_ serial: String, _ number: String?) {
+        resolving.remove(serial)
+        guard registry.needsIdentity.contains(serial) else { return }
+        // Unreadable: keep the guess rather than ask again on every list.
+        let id = number.map(DeviceID.init) ?? registry.devices.values.first { $0.transports.contains { $0.serial == serial } }?.id
+        guard let id else { return }
+        handle(registry.resolve(serial: serial, as: id, now: now))
+    }
+
+    private func tick() async {
+        handle(registry.expireRestart(now: now))
+        let due = reconnect.due(now: now.timeIntervalSinceReferenceDate, tabOpen: tabOpen)
+        for id in due { await tryReconnect(id) }
+        scheduleTimer()
+    }
+
+    /// `adb mdns services` to find where the phone is now, else its last address;
+    /// then `adb connect` with a short timeout (it hangs on unreachable addresses).
+    private func tryReconnect(_ id: DeviceID) async {
+        guard let adb = await server.process(), Self.isRunning(serverStatus.state) else { return }
+        var address = registry.devices[id]?.lastWirelessAddress
+        if let out = try? await adb.run(["mdns", "services"], timeout: .seconds(5)),
+           let service = MdnsService.parse(out.text).first(where: { $0.type == MdnsService.connectType && $0.serialNumber == id.rawValue }) {
+            address = service.address
+        }
+        guard let address, AdbSerial.address(address) != nil else { return }
+        Log.app.debug("Trying to reconnect an Android device over Wi-Fi")
+        _ = try? await adb.run(["connect", address], timeout: .seconds(5))
+    }
+
+    private func scheduleTimer() {
+        timer?.cancel()
+        timer = nil
+        let t = now.timeIntervalSinceReferenceDate
+        let wakes = [registry.restartDeadline?.timeIntervalSinceReferenceDate, reconnect.nextWake(now: t, tabOpen: tabOpen)].compactMap { $0 }
+        guard let at = wakes.min() else { return }
+        timer = Task(priority: .utility) { [weak self] in
+            try? await Task.sleep(for: .seconds(max(0, at - t)), tolerance: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            await self?.tick()
+        }
+    }
+
+    private func publish() {
+        var s = Snapshot()
+        s.devices = registry.devices.values.sorted { a, b in
+            a.isConnected != b.isConnected ? a.isConnected : a.lastSeen > b.lastSeen
+        }
+        s.events = registry.events
+        s.server = serverStatus
+        guard s != lastSnapshot else { return }
+        lastSnapshot = s
+        continuation.yield(s)
+    }
+}

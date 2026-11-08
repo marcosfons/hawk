@@ -267,9 +267,9 @@ VALID="yes"
         echo "Window visibility changes while measured:"
         echo; echo '```'; tail -n +"$(( LOG_START + 1 ))" "$TMP/log" | grep 'Window '; echo '```'; echo
     fi
-    if grep -q 'adb' "$TMP/log"; then
+    if grep -qE 'adb|Android device' "$TMP/log"; then
         echo "adb events (whole run, warm-up included):"
-        echo; echo '```'; grep 'adb' "$TMP/log" | sed -E 's/^[0-9-]+ ([0-9:]+)[^ ]* .*:app\] /\1 /' | cut -c1-160; echo '```'; echo
+        echo; echo '```'; grep -E 'adb|Android device' "$TMP/log" | sed -E 's/^[0-9-]+ ([0-9:]+)[^ ]* .*:app\] /\1 /' | cut -c1-160; echo '```'; echo
     fi
     echo "## Threads (sample, 10 s at 1 ms: total samples / busy samples)"
     echo

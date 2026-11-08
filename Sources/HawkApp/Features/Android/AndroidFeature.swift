@@ -10,8 +10,8 @@
 //  - slow work (running adb) in an actor of its own, so the UI never waits;
 //  - a Refresher for the schedule: every 2 s while the tab is visible, never in
 //    the background (nothing here needs to run with the tab closed);
-//  - `AdbServer` supervises the adb server for the whole app's life; the header
-//    strip shows its state and controls it.
+//  - `AndroidHub` supervises adb and the devices for the whole app's life; the
+//    header strip shows the server's state from the hub's snapshots.
 //
 
 import HawkKit
@@ -30,19 +30,19 @@ final class AndroidFeature: Feature {
     var selectedSerial: String?
     private(set) var adbStatus = AdbServer.Status()
 
-    @ObservationIgnored let server = AdbServer()
+    @ObservationIgnored let hub = AndroidHub()
     @ObservationIgnored private let worker = AndroidWorker()
     @ObservationIgnored private lazy var refresher = Refresher("android", foreground: .seconds(2), background: nil) { [weak self] in
         await self?.refresh()
     }
 
     init() {
-        let server = server
+        let hub = hub
         Task { [weak self] in
-            await server.launch()
-            for await status in server.statusUpdates {
+            await hub.start()
+            for await snapshot in hub.snapshots {
                 guard let self else { return }
-                if status != self.adbStatus { self.adbStatus = status }
+                if snapshot.server != self.adbStatus { self.adbStatus = snapshot.server }
             }
         }
     }
@@ -51,12 +51,12 @@ final class AndroidFeature: Feature {
 
     func setVisible(_ visible: Bool) {
         refresher.visible = visible
-        Task { await server.setTabVisible(visible) }
+        Task { await hub.setTabVisible(visible) }
     }
 
-    func startAdb() { Task { await server.userStart() } }
-    func stopAdb() { Task { await server.userStop() } }
-    func restartAdb() { Task { await server.userRestart() } }
+    func startAdb() { Task { await hub.server.userStart() } }
+    func stopAdb() { Task { await hub.server.userStop() } }
+    func restartAdb() { Task { await hub.server.userRestart() } }
 
     var selected: AndroidDevice? { devices.first { $0.serial == selectedSerial } ?? devices.first }
 
