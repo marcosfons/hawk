@@ -63,6 +63,8 @@ struct SectionContext {
     /// Its connection events, oldest first.
     let events: [DeviceEvent]
     let hub: AndroidHub
+    /// The section is on screen: periodic reads run only while this is true.
+    let shown: Bool
     var isLive: Bool { device.state == .device }
 }
 
@@ -79,7 +81,7 @@ struct SectionHost: View {
                            ? "Unauthorized: accept the debugging prompt on the phone. If it never appears, revoke USB debugging authorizations in Developer options and plug in again."
                            : "The device is \(state.word); Hawk can talk to it once it is ready.")
                 }
-                ScrollView { section(SectionContext(device: device, events: feature.snapshot.events[device.id] ?? [], hub: feature.hub)) }
+                ScrollView { section(SectionContext(device: device, events: feature.snapshot.events[device.id] ?? [], hub: feature.hub, shown: feature.visible)) }
             }
         } else {
             ContentUnavailableView("No device", systemImage: "cable.connector",

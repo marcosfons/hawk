@@ -38,6 +38,7 @@ app: build
 	cp "$(BIN)/HawkApp" "$(APP)/Contents/MacOS/Hawk"
 	cp Support/Info.plist "$(APP)/Contents/Info.plist"
 	iconutil -c icns Support/AppIcon.iconset -o "$(APP)/Contents/Resources/AppIcon.icns"
+	cp android-helper/hawk-helper.dex "$(APP)/Contents/Resources/hawk-helper.dex"
 	codesign --force --sign - -r='designated => identifier "com.marcos.Hawk"' "$(APP)"
 
 install: app

@@ -39,7 +39,8 @@ final class AndroidFeature: Feature {
     @ObservationIgnored let hub = AndroidHub()
     @ObservationIgnored let overview: OverviewModel
     @ObservationIgnored private let defaults = UserDefaults.standard
-    @ObservationIgnored private var visible = false
+    /// The tab is on screen (window open and visible); sections stop their work otherwise.
+    private(set) var visible = false
 
     init() {
         let hub = hub
@@ -59,7 +60,7 @@ final class AndroidFeature: Feature {
     func makeView() -> AnyView { AnyView(AndroidView(feature: self)) }
 
     func setVisible(_ visible: Bool) {
-        self.visible = visible
+        if self.visible != visible { self.visible = visible }
         Task { await hub.setTabVisible(visible) }
         updateVisibility()
     }
