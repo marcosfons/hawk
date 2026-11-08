@@ -13,7 +13,8 @@ import SwiftUI
 
 struct LogcatSection: View {
     let context: SectionContext
-    @State private var model = LogcatModel()
+
+    private var model: LogcatModel { LogcatRegistry.shared.model(for: context.device.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -26,8 +27,15 @@ struct LogcatSection: View {
             if let e = model.selected { LogDetail(entry: e, group: model.rows.filter { $0.group != nil && $0.group == e.group }) }
         }
         .task(id: Key(device: context.device.id, live: context.isLive, shown: context.shown, capacity: model.capacity)) {
-            guard context.isLive, context.shown else { return }
-            await model.run(context)
+            let model = model
+            guard context.isLive, context.shown else {
+                model.detach()
+                return
+            }
+            model.attach(context)
+            // Held until the page goes away (or the key changes), then let go.
+            while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
+            model.detach()
         }
     }
 
@@ -106,6 +114,19 @@ private struct LogFilterBar: View {
             }
             .fixedSize()
             .help("How many lines Hawk keeps in memory; changing it reads the log again")
+            Toggle("Keep running", isOn: $model.keepRunning).toggleStyle(.button)
+                .tint(model.keepRunning ? Palette.hot : nil)
+                .help("Keep streaming when this page closes, until switched off or Hawk quits")
+            Button(model.recordingTo == nil ? "Record..." : "Stop recording", systemImage: model.recordingTo == nil ? "record.circle" : "stop.circle") {
+                if model.recordingTo != nil {
+                    model.stopRecording()
+                } else {
+                    let panel = NSSavePanel()
+                    panel.nameFieldStringValue = "logcat-recording.txt"
+                    if panel.runModal() == .OK, let url = panel.url { model.startRecording(to: url) }
+                }
+            }
+            .tint(model.recordingTo == nil ? nil : Palette.hot)
             Toggle("Pause", isOn: $model.paused).toggleStyle(.button)
             Button("Export...", systemImage: "square.and.arrow.up") {
                 let panel = NSSavePanel()

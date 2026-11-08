@@ -107,3 +107,18 @@ private func collect(_ engine: LogcatEngine, until done: @escaping (View) -> Boo
         #expect(text.contains("line 0") && text.contains("line 1"))
     }
 }
+
+@Suite struct AndroidLogcatRecordingTests {
+    @Test func recordingWritesTheStreamToAFile() async throws {
+        let fake = FakeDeviceSession()
+        let text = "11-08 10:00:00.000 10100 100 100 I Fake: one\n11-08 10:00:01.000 10100 100 100 I Fake: two\n"
+        fake.answer(stream: LogcatEngine.command, with: [text])
+        let url = FileManager.default.temporaryDirectory.appending(path: "hawk-record-\(UUID().uuidString).txt")
+        let engine = LogcatEngine()
+        try await engine.startRecording(to: url)
+        await engine.start(fake)
+        for await u in engine.updates where u.ended != nil { break }
+        #expect(await !engine.isRecording)
+        #expect(try String(contentsOf: url, encoding: .utf8) == text)
+    }
+}

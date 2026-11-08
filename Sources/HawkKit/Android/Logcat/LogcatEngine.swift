@@ -37,6 +37,9 @@ public actor LogcatEngine {
     private var tail: (store: DeviceStore, id: DeviceID)?
     private var tailPending = Data()
     private var tailWritten = Date.distantPast
+    /// A recording the user started: the whole stream into a file they keep.
+    private var recording: FileHandle?
+    public var isRecording: Bool { recording != nil }
 
     /// The tail on disk is capped at this, oldest files first, inside the device's cap.
     public static let tailBytes = 20 << 20
@@ -88,7 +91,23 @@ public actor LogcatEngine {
         running = false
         partial = Data()
         writeTail(force: true)
+        stopRecording()
         Log.app.info("Logcat stopped")
+    }
+
+    /// Starts writing every line from now on to `url` (created or replaced).
+    public func startRecording(to url: URL) throws {
+        stopRecording()
+        guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw CocoaError(.fileWriteNoPermission) }
+        recording = try FileHandle(forWritingTo: url)
+        Log.app.info("Logcat recording started")
+    }
+
+    public func stopRecording() {
+        guard let recording else { return }
+        try? recording.close()
+        self.recording = nil
+        Log.app.info("Logcat recording stopped")
     }
 
     /// Paused: lines are still read and kept, but the view is not updated.
@@ -138,6 +157,12 @@ public actor LogcatEngine {
         let complete = partial[partial.startIndex...lastNewline]
         partial = Data(partial[partial.index(after: lastNewline)...])
         if tail != nil { tailPending.append(complete) }
+        if let recording {
+            do { try recording.write(contentsOf: complete) } catch {
+                Log.app.warning("Logcat recording stopped: \(error.localizedDescription)")
+                stopRecording()
+            }
+        }
         let text = String(decoding: complete, as: UTF8.self)
         context.now = Date().timeIntervalSince1970
         var added: [LogEntry] = []
@@ -207,6 +232,7 @@ public actor LogcatEngine {
     private func ended(_ reason: String) {
         flush()
         writeTail(force: true)
+        stopRecording()
         task = nil
         flusher?.cancel()
         flusher = nil

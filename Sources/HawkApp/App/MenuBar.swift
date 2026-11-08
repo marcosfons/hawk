@@ -52,6 +52,10 @@ struct MenuBarLabel: View {
     var body: some View {
         HStack(spacing: 3) {
             Image(nsImage: MenuBarIcon.image)
+            // An Android logcat kept running with its page closed (it costs battery).
+            if LogcatRegistry.shared.anyKeptRunning {
+                Image(systemName: "record.circle.fill").foregroundStyle(.red).accessibilityLabel("Logcat running")
+            }
             if app.menuShowsTemperature, let chip = monitor.headline.chip {
                 Text("\(chip)°").monospacedDigit()
             }

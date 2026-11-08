@@ -21,11 +21,20 @@ final class LogcatModel {
     private(set) var filter = LogFilter()
     private(set) var invalid: [String] = []
     var selected: LogEntry?
+    /// Keep streaming when the page closes; off at every launch.
+    var keepRunning = false {
+        didSet { if !keepRunning, !attached { stop() } }
+    }
+    private(set) var recordingTo: URL?
     var paused = false { didSet { if paused != oldValue { let p = paused; Task { await engine?.setPaused(p) } } } }
     var filterText = "" { didSet { if filterText != oldValue { scheduleFilter() } } }
     /// Lines kept in memory (about 0.4 KB each); changing it restarts the stream.
     var capacity = LogcatModel.savedCapacity {
-        didSet { if capacity != oldValue { UserDefaults.standard.set(capacity, forKey: "logcatCapacity") } }
+        didSet {
+            guard capacity != oldValue else { return }
+            UserDefaults.standard.set(capacity, forKey: "logcatCapacity")
+            stop()
+        }
     }
 
     static let capacities = [50_000, 100_000, 200_000, 500_000]
@@ -35,14 +44,53 @@ final class LogcatModel {
     }
 
     @ObservationIgnored private var engine: LogcatEngine?
+    @ObservationIgnored private var runTask: Task<Void, Never>?
+    @ObservationIgnored private var attached = false
     @ObservationIgnored private var filterTask: Task<Void, Never>?
     @ObservationIgnored private(set) var appNames: [Int: String] = [:]
     @ObservationIgnored private(set) var packages: [(name: String, title: String)] = []
     @ObservationIgnored private var context = LogFilter.Context()
 
-    /// Streams until the task running it is cancelled (the page closes, the window
-    /// hides, the device goes): then the phone's logcat stops too.
-    func run(_ section: SectionContext) async {
+    /// The page is shown: start streaming unless it already runs.
+    func attach(_ section: SectionContext) {
+        attached = true
+        guard runTask == nil else { return }
+        runTask = Task { [weak self] in
+            await self?.run(section)
+            self?.runTask = nil
+        }
+    }
+
+    /// The page went away: the stream stops unless Keep running is on.
+    func detach() {
+        attached = false
+        if !keepRunning { stop() }
+    }
+
+    func stop() {
+        runTask?.cancel()
+        runTask = nil
+    }
+
+    func startRecording(to url: URL) {
+        Task {
+            do {
+                try await engine?.startRecording(to: url)
+                recordingTo = url
+            } catch {
+                ended = "Could not record to \(url.lastPathComponent)"
+            }
+        }
+    }
+
+    func stopRecording() {
+        recordingTo = nil
+        Task { await engine?.stopRecording() }
+    }
+
+    /// Streams until cancelled (page closed without Keep running, Keep running
+    /// switched off, the device gone): then the phone's logcat stops too.
+    private func run(_ section: SectionContext) async {
         await loadPackages(section)
         guard let session = try? await section.hub.session(for: section.device.id) else { return }
         let engine = LogcatEngine(capacity: capacity)
@@ -59,6 +107,7 @@ final class LogcatModel {
         }
         await engine.stop()
         running = false
+        recordingTo = nil
     }
 
     func clear() { Task { await engine?.clear() } }

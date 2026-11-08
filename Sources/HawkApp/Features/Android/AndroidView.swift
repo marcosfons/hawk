@@ -94,6 +94,11 @@ private struct DeviceRow: View {
             }
             HStack(spacing: 4) {
                 ForEach(device.transports.map(\.kind).sorted(), id: \.self) { kind in Chip(text: kind.label) }
+                if LogcatRegistry.shared.keptRunning(device.id) {
+                    Text("logcat").font(Typography.caption).foregroundStyle(.white)
+                        .padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Palette.hot))
+                        .accessibilityLabel("Logcat kept running")
+                }
                 Text(status).font(Typography.caption).foregroundStyle(Palette.secondary).lineLimit(1)
             }
         }
