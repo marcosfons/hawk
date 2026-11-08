@@ -37,6 +37,9 @@ final class AndroidFeature: Feature {
     }
 
     @ObservationIgnored let hub = AndroidHub()
+    /// Devices usable at the last snapshot: one that becomes usable again gets its
+    /// forced power states undone (plan D).
+    @ObservationIgnored private var usable: Set<DeviceID> = []
     @ObservationIgnored let overview: OverviewModel
     @ObservationIgnored private let defaults = UserDefaults.standard
     /// The tab is on screen (window open and visible); sections stop their work otherwise.
@@ -88,6 +91,15 @@ final class AndroidFeature: Feature {
             selectedDevice = new.devices.first(where: \.isConnected)?.id ?? new.devices.first?.id
         }
         overview.deviceChanged(device)
+        let nowUsable = Set(new.devices.filter { $0.state == .device }.map(\.id))
+        for id in nowUsable.subtracting(usable) {
+            let hub = hub, name = new.devices.first { $0.id == id }?.name ?? "Device"
+            Task {
+                guard let session = try? await hub.session(for: id) else { return }
+                await PowerForces.undoAll(on: session, deviceName: name, store: hub.store)
+            }
+        }
+        usable = nowUsable
         updateVisibility()
     }
 

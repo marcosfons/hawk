@@ -11,6 +11,8 @@ public enum AndroidAction: Sendable, Equatable {
     case enable(package: String)
     /// Installing adds or updates an app; the target is the file name.
     case install(file: String)
+    /// A reversible device setting or forced state (developer toggles, Doze...), named.
+    case change(String)
     case deletePath(String)
 
     public var name: String {
@@ -22,6 +24,7 @@ public enum AndroidAction: Sendable, Equatable {
         case .disable: "Disable"
         case .enable: "Enable"
         case .install: "Install"
+        case .change: "Change"
         case .deletePath: "Delete"
         }
     }
@@ -30,6 +33,7 @@ public enum AndroidAction: Sendable, Equatable {
         switch self {
         case .forceStop(let p), .clearCache(let p), .clearData(let p), .uninstall(let p), .disable(let p), .enable(let p): p
         case .install(let file): file
+        case .change(let what): what
         case .deletePath(let path): path
         }
     }
@@ -107,6 +111,9 @@ public enum AndroidRules {
         case .enable(let p):
             // Turning an app back on never loses anything.
             return ShellQuote.isPackageName(p) ? .allowed : .blocked("Not a package name")
+        case .change:
+            // Reversible by design: each one comes with its undo.
+            return .allowed
         case .install:
             // Android itself refuses a downgrade or a different signature (no -d, no
             // uninstall first), so an install never loses an app's data.
