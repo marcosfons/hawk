@@ -45,3 +45,17 @@ Run the scenario when a milestone lands, add one row per scenario under a
 heading for the plan, with the commit, and note anything over budget with the
 reason. Runs where the window was covered are flagged invalid by the script
 (`Valid: no`) and are not recorded.
+
+## Plan A
+
+`adb-down` and `adb-restart` run against `tools/fake-adb` on port 5099, so they
+never touch the real server or a phone. A single 60 s run on a Mac doing other
+work varies by about half a point (background read 2.1% to 3.6% across runs of
+the same kind), so differences smaller than that are noise, not regressions.
+
+| Date | Commit | Scenario | CPU | Footprint | POWER | Main busy | Phone |
+|---|---|---|---|---|---|---|---|
+| 2026-11-07 | M4 | android-closed (Overview, adb attached, phone on USB) | 2.24% | 57 MB | 2.25 | 193 | 0.0% |
+| 2026-11-07 | M4 | background (window closed, adb watch open, phone on USB) | 2.13% | 35 MB | 2.14 | 170 | 0.0% |
+| 2026-11-07 | M4 | adb-down (Android tab, backoff 2-5-10-30 s, then failing) | 2.44% | 39 MB | 2.44 | 222 | 0.1% |
+| 2026-11-07 | M4 | adb-restart (window open, server killed, re-attached within 2 s) | 2.03% | 37 MB | 2.04 | 204 | 0.0% |

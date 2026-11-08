@@ -9,7 +9,9 @@
 //  - state on the main actor in the feature (`@Observable`), read by its view;
 //  - slow work (running adb) in an actor of its own, so the UI never waits;
 //  - a Refresher for the schedule: every 2 s while the tab is visible, never in
-//    the background (nothing here needs to run with the tab closed).
+//    the background (nothing here needs to run with the tab closed);
+//  - `AdbServer` supervises the adb server for the whole app's life; the header
+//    strip shows its state and controls it.
 //
 
 import HawkKit
@@ -26,19 +28,44 @@ final class AndroidFeature: Feature {
     private(set) var details: [String: AndroidDetails] = [:]
     private(set) var adbMissing = Adb.executable == nil
     var selectedSerial: String?
+    private(set) var adbStatus = AdbServer.Status()
 
+    @ObservationIgnored let server = AdbServer()
     @ObservationIgnored private let worker = AndroidWorker()
     @ObservationIgnored private lazy var refresher = Refresher("android", foreground: .seconds(2), background: nil) { [weak self] in
         await self?.refresh()
     }
 
+    init() {
+        let server = server
+        Task { [weak self] in
+            await server.launch()
+            for await status in server.statusUpdates {
+                guard let self else { return }
+                if status != self.adbStatus { self.adbStatus = status }
+            }
+        }
+    }
+
     func makeView() -> AnyView { AnyView(AndroidView(feature: self)) }
 
-    func setVisible(_ visible: Bool) { refresher.visible = visible }
+    func setVisible(_ visible: Bool) {
+        refresher.visible = visible
+        Task { await server.setTabVisible(visible) }
+    }
+
+    func startAdb() { Task { await server.userStart() } }
+    func stopAdb() { Task { await server.userStop() } }
+    func restartAdb() { Task { await server.userRestart() } }
 
     var selected: AndroidDevice? { devices.first { $0.serial == selectedSerial } ?? devices.first }
 
     private func refresh() async {
+        // `adb devices` would start a server the user stopped: only while it runs.
+        guard case .running = adbStatus.state else {
+            if !devices.isEmpty { devices = [] }
+            return
+        }
         guard let list = await worker.devices() else { adbMissing = Adb.executable == nil; devices = []; return }
         if list != devices { devices = list }
         // Details change slowly (battery aside): fetch for the selected device every 30 s.
@@ -61,6 +88,7 @@ private struct AndroidView: View {
 
     var body: some View {
         VStack(spacing: Metrics.spacing) {
+            AdbStrip(status: feature.adbStatus, start: feature.startAdb, stop: feature.stopAdb, restart: feature.restartAdb)
             if feature.adbMissing {
                 ContentUnavailableView("adb not found", systemImage: "candybarphone",
                                        description: Text("Install Android platform-tools (Android Studio's SDK Manager, or brew install android-platform-tools)."))

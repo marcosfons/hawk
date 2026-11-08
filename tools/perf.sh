@@ -36,12 +36,23 @@ WARMUP="${WARMUP:-20}"
 
 die() { echo "perf: $*" >&2; exit 1; }
 
-# scenario NAME -> TAB (feature id), WINDOW (open|closed), SECS, WHAT
+FAKE_PORT=5099
+FAKE_ENV=(--env "ADB=$PWD/tools/fake-adb" --env "ANDROID_ADB_SERVER_PORT=$FAKE_PORT")
+
+# scenario NAME -> TAB (feature id), WINDOW (open|closed), SECS, WHAT, and optionally
+# ENVS (open --env pairs) and ACTION (a function run when measuring starts).
 scenario() {
+    ENVS=(); ACTION=""
     case "$1" in
         baseline)   TAB=overview; WINDOW=open;   SECS=60;   WHAT="Window open on Overview" ;;
         background) TAB=overview; WINDOW=closed; SECS=60;   WHAT="Window closed, menu bar only" ;;
         soak)       TAB="${TAB:-overview}"; WINDOW=open; SECS=1800; WHAT="Soak with the window open on $TAB, footprint every minute, leaks at the end" ;;
+        android-closed) TAB=overview; WINDOW=open; SECS=60; WHAT="Window open on Overview, Android tab closed, adb running, device connected" ;;
+        # Fake adb on a spare port (tools/fake-adb): the real server and the phone are never touched.
+        adb-down)   TAB=android; WINDOW=open; SECS=60; ENVS=("${FAKE_ENV[@]}" --env FAKE_ADB_FAIL=1)
+                    WHAT="Android tab open, adb cannot start (fake adb): backoff, then failing with 60 s retries" ;;
+        adb-restart) TAB=overview; WINDOW=closed; SECS=30; ENVS=("${FAKE_ENV[@]}"); ACTION=kill_fake_server
+                    WHAT="Server killed by someone else (fake adb) as measuring starts; the 30 s of recovery after" ;;
         *) return 1 ;;
     esac
     SECS="${DURATION:-$SECS}"
@@ -52,6 +63,13 @@ list() {
 baseline     window open on Overview, 60 s
 background   window closed (menu bar only), 60 s
 soak         window open (TAB=<feature id>, default overview), 30 min, leaks
+android-closed  window open on Overview, adb running, device connected, 60 s
+adb-down     Android tab open, adb failing to start (fake adb, port 5099), 60 s
+adb-restart  window closed, fake adb server killed as measuring starts, 30 s of recovery
+
+Scenarios with the window open need it uncovered on the current desktop for the
+whole run (a minimized window or one on another desktop measures as hidden), so
+they only run with WINDOW_OK=1, when nobody is using the screen.
 EOF
 }
 
@@ -60,6 +78,8 @@ EOF
 NAME="$1"
 scenario "$NAME" || { echo "perf: unknown scenario '$NAME'" >&2; list >&2; exit 2; }
 [ -x "$EXE" ] || die "no $APP; run make first"
+[ "$WINDOW" = closed ] || [ "${WINDOW_OK:-0}" = 1 ] ||
+    die "$NAME needs the Hawk window uncovered for the whole run; run it with WINDOW_OK=1 when the screen is free"
 
 mkdir -p "$OUT_DIR"
 STAMP="$(date +%Y-%m-%d-%H%M)"
@@ -85,6 +105,8 @@ if [ -n "$(hawk_pids)" ]; then
     [ -z "$(hawk_pids)" ] || die "could not quit the running Hawk"
 fi
 
+kill_fake_server() { pkill -f "fake-adb-server.py $FAKE_PORT"; }
+
 PID=""
 CAFFEINATE=""
 LOGSTREAM=""
@@ -97,25 +119,30 @@ cleanup() {
         kill "$PID" 2>/dev/null
         if [ -n "$PREVIOUS" ] && [ -d "$PREVIOUS" ]; then
             sleep 1
-            open "$PREVIOUS" && echo "perf: reopened $PREVIOUS"
+            # -g: in the background, never in front of what the user is doing.
+            open -g "$PREVIOUS" && echo "perf: reopened $PREVIOUS (in the background)"
         fi
     fi
+    [ ${#ENVS[@]} -gt 0 ] && kill_fake_server
     rm -rf "$TMP"
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
+# Started before Hawk, so its launch (adb attach or start) is in the report too.
+/usr/bin/log stream --style compact --level info \
+    --predicate 'subsystem == "com.marcos.Hawk" AND category == "app"' >"$TMP/log" 2>/dev/null & LOGSTREAM=$!
+sleep 1
+
 ARGS=(-feature "$TAB")
 [ "$WINDOW" = closed ] && ARGS+=(-startInMenuBar YES)
 echo "perf: $NAME - $WHAT (commit $COMMIT)"
-open -n "$APP" --args "${ARGS[@]}" || die "could not open $APP"
+open -n -g ${ENVS[@]+"${ENVS[@]}"} "$APP" --args "${ARGS[@]}" || die "could not open $APP"
 for _ in $(seq 20); do PID="$(pgrep -f "^$EXE( |$)" | head -1)"; [ -n "$PID" ] && break; sleep 0.5; done
 [ -n "$PID" ] || die "Hawk did not start"
 
 # The display must stay awake: a sleeping display or a covered window reads as background.
 caffeinate -d -i -w "$PID" & CAFFEINATE=$!
-/usr/bin/log stream --style compact --level info \
-    --predicate 'subsystem == "com.marcos.Hawk" AND category == "app"' >"$TMP/log" 2>/dev/null & LOGSTREAM=$!
 
 echo "perf: Hawk $PID, settling for $WARMUP s"
 sleep "$WARMUP"
@@ -135,6 +162,7 @@ SERIAL="$(phone_serial)"
 
 FP_START="$(footprint_mb "$PID")"
 LOG_START="$(wc -l <"$TMP/log")"
+[ -n "$ACTION" ] && "$ACTION"
 
 # Samples every second (every 10 s for long runs); the first sample has no CPU yet.
 STEP=1; [ "$SECS" -gt 300 ] && STEP=10
@@ -238,6 +266,10 @@ VALID="yes"
     if [ "${HIDDEN:-0}" -gt 0 ]; then
         echo "Window visibility changes while measured:"
         echo; echo '```'; tail -n +"$(( LOG_START + 1 ))" "$TMP/log" | grep 'Window '; echo '```'; echo
+    fi
+    if grep -q 'adb' "$TMP/log"; then
+        echo "adb events (whole run, warm-up included):"
+        echo; echo '```'; grep 'adb' "$TMP/log" | sed -E 's/^[0-9-]+ ([0-9:]+)[^ ]* .*:app\] /\1 /' | cut -c1-160; echo '```'; echo
     fi
     echo "## Threads (sample, 10 s at 1 ms: total samples / busy samples)"
     echo
