@@ -230,7 +230,6 @@ public actor AdbServer {
     /// if that process is an adb; then wait for the port to free.
     private func stopServer() async {
         stopTracking()
-        devicesContinuation.yield([])
         setActivity("Stopping adb")
         defer { setActivity(nil) }
         if let adb { _ = try? await adb.run(["kill-server"], timeout: .seconds(5)) }
