@@ -16,6 +16,8 @@ final class FakeDeviceSession: DeviceSession {
 
     private struct State {
         var shell: [String: ShellResult] = [:]
+        /// Answers used once each, in order, before `shell`'s.
+        var queued: [String: [ShellResult]] = [:]
         var batch: [String: String] = [:]
         var exec: [String: AdbOutput] = [:]
         var streams: [String: [Data]] = [:]
@@ -32,6 +34,11 @@ final class FakeDeviceSession: DeviceSession {
 
     func answer(shell script: String, with stdout: String, status: Int32 = 0) {
         state.withLock { $0.shell[script] = ShellResult(stdout: stdout, status: status) }
+    }
+
+    /// Answers for successive calls of the same script, used once each.
+    func queue(shell script: String, outputs: [String]) {
+        state.withLock { $0.queued[script, default: []] += outputs.map { ShellResult(stdout: $0) } }
     }
 
     /// The output of the batch part with this label, whatever its command.
@@ -62,7 +69,14 @@ final class FakeDeviceSession: DeviceSession {
 
     func shell(_ script: String, timeout: Duration) async throws -> ShellResult {
         try record("shell \(script)")
-        return state.withLock { $0.shell[script] } ?? ShellResult(stdout: "")
+        return state.withLock { s in
+            if var q = s.queued[script], !q.isEmpty {
+                let first = q.removeFirst()
+                s.queued[script] = q
+                return first
+            }
+            return s.shell[script]
+        } ?? ShellResult(stdout: "")
     }
 
     func shellBatch(_ parts: [String: String], timeout: Duration) async throws -> [String: String] {
