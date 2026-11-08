@@ -66,7 +66,11 @@ public struct HelperRunner: Sendable {
             Log.app.warning("Android helper run did not complete (status \(result.status))")
         }
         for e in output.errors.prefix(3) { Log.app.warning("Android helper: \(e)") }
-        if let cpu = output.stats["cpu_ms"] { Log.app.debug("Android helper run: \(cpu) ms CPU on the phone") }
+        // Kept (info) so a run's phone-side cost can be read back against the budget:
+        // under 0.3 s CPU and about 45 MB for a normal run.
+        if let cpu = output.stats["cpu_ms"] {
+            Log.app.info("Android helper run: \(cpu) ms CPU, \(output.stats["wall_ms"] ?? "?") ms, PSS \(output.stats["pss_kb"] ?? "?") KB, peak \(output.stats["hwm_kb"] ?? "?") KB on the phone")
+        }
         return output
     }
 
