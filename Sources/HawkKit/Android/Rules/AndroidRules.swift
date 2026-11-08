@@ -9,6 +9,8 @@ public enum AndroidAction: Sendable, Equatable {
     case uninstall(package: String)
     case disable(package: String)
     case enable(package: String)
+    /// Brings back an app uninstalled for user 0 (`cmd package install-existing`).
+    case reinstall(package: String)
     /// Installing adds or updates an app; the target is the file name.
     case install(file: String)
     /// A reversible device setting or forced state (developer toggles, Doze...), named.
@@ -23,6 +25,7 @@ public enum AndroidAction: Sendable, Equatable {
         case .uninstall: "Uninstall"
         case .disable: "Disable"
         case .enable: "Enable"
+        case .reinstall: "Reinstall"
         case .install: "Install"
         case .change: "Change"
         case .deletePath: "Delete"
@@ -31,7 +34,7 @@ public enum AndroidAction: Sendable, Equatable {
 
     public var target: String {
         switch self {
-        case .forceStop(let p), .clearCache(let p), .clearData(let p), .uninstall(let p), .disable(let p), .enable(let p): p
+        case .forceStop(let p), .clearCache(let p), .clearData(let p), .uninstall(let p), .disable(let p), .enable(let p), .reinstall(let p): p
         case .install(let file): file
         case .change(let what): what
         case .deletePath(let path): path
@@ -108,8 +111,8 @@ public enum AndroidRules {
 
     public static func verdict(_ action: AndroidAction, facts: DeviceFacts) -> Verdict {
         switch action {
-        case .enable(let p):
-            // Turning an app back on never loses anything.
+        case .enable(let p), .reinstall(let p):
+            // Turning an app back on, or bringing it back, never loses anything.
             return ShellQuote.isPackageName(p) ? .allowed : .blocked("Not a package name")
         case .change:
             // Reversible by design: each one comes with its undo.
