@@ -68,4 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         return .terminateLater
     }
+
+    /// No adb child outlives Hawk (a stuck `adb shell` would hold a device slot).
+    func applicationWillTerminate(_ notification: Notification) {
+        ChildProcesses.shared.killAll()
+    }
 }

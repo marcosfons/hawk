@@ -1,0 +1,37 @@
+#!/bin/bash
+#
+# fake-adb - stands in for adb in perf scenarios (tools/perf.sh adb-down,
+# adb-restart), on $ANDROID_ADB_SERVER_PORT, so measuring a failing or
+# restarting server never touches the real one on 5037 or any phone.
+#
+#   version        prints an adb-like version
+#   start-server   starts tools/fake-adb-server.py on the port (fails when
+#                  FAKE_ADB_FAIL is set, like an adb that cannot start)
+#   kill-server    stops it
+
+PORT="${ANDROID_ADB_SERVER_PORT:?fake-adb needs ANDROID_ADB_SERVER_PORT}"
+case "$PORT" in 5037) echo "fake-adb: refusing the real adb port" >&2; exit 2 ;; esac
+DIR="$(cd "$(dirname "$0")" && pwd)"
+PIDFILE="${TMPDIR:-/tmp}/fake-adb-$PORT.pid"
+
+case "${1:-}" in
+    version)
+        printf 'Android Debug Bridge version 1.0.41\nVersion 0.0.0-fake\nInstalled as %s\n' "$0" ;;
+    start-server)
+        if [ -n "${FAKE_ADB_FAIL:-}" ]; then
+            echo "* failed to start daemon" >&2
+            echo "error: cannot connect to daemon" >&2
+            exit 1
+        fi
+        nc -z 127.0.0.1 "$PORT" 2>/dev/null && exit 0
+        nohup /usr/bin/python3 -I "$DIR/fake-adb-server.py" "$PORT" </dev/null >/dev/null 2>&1 &
+        echo $! >"$PIDFILE"
+        for _ in 1 2 3 4 5 6 7 8 9 10; do nc -z 127.0.0.1 "$PORT" 2>/dev/null && exit 0; sleep 0.1; done
+        exit 1 ;;
+    kill-server)
+        [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null
+        rm -f "$PIDFILE" ;;
+    *)
+        echo "fake-adb: '$*' is not supported" >&2
+        exit 1 ;;
+esac
