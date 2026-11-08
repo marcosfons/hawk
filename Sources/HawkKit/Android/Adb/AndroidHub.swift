@@ -105,6 +105,9 @@ public actor AndroidHub {
 
     public func preferredSerial(_ id: DeviceID) -> String? { registry.preferredSerial(for: id) }
 
+    /// Every known device now (the connection doctor matches them against USB).
+    public func devices() -> [Device] { Array(registry.devices.values) }
+
     /// The device's packages as last read (kept across launches).
     public func packages(for id: DeviceID) -> PackageIndex? { packageIndexes[id] }
 

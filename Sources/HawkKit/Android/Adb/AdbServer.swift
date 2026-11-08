@@ -101,6 +101,9 @@ public actor AdbServer {
         await probe()
     }
 
+    /// The status now, for pages that need it once rather than as a stream.
+    public func currentStatus() -> Status { status }
+
     /// The adb Hawk runs, if found.
     public func process() -> AdbProcess? { adb }
 

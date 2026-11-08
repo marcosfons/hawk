@@ -84,6 +84,12 @@ public struct AdbInstallation: Sendable, Equatable {
     public var others: [AdbBinary]
     public var broken: [AdbBrokenPath]
 
+    public init(chosen: AdbBinary?, others: [AdbBinary], broken: [AdbBrokenPath]) {
+        self.chosen = chosen
+        self.others = others
+        self.broken = broken
+    }
+
     /// Two copies with different versions kill each other's server on every call.
     public var hasVersionConflict: Bool {
         guard let chosen else { return false }

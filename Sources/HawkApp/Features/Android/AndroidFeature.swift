@@ -109,6 +109,7 @@ final class AndroidFeature: Feature {
             Task {
                 guard let session = try? await hub.session(for: id) else { return }
                 await PowerForces.undoAll(on: session, deviceName: name, store: hub.store)
+                await SavedTunnels.restore(on: session, store: hub.store)
             }
         }
         if live != liveIDs {
