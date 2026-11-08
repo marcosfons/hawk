@@ -39,6 +39,8 @@ final class AndroidFeature: Feature {
     @ObservationIgnored let hub = AndroidHub()
     /// Catches ANRs and crashes from the DropBox, window open or not (plan C).
     @ObservationIgnored let crashes: CrashWatcher
+    /// Devices usable at the last snapshot: the crash watcher follows them (plan C),
+    /// and one that becomes usable again gets its forced power states undone (plan D).
     @ObservationIgnored private var liveIDs: Set<DeviceID> = []
     @ObservationIgnored let overview: OverviewModel
     @ObservationIgnored private let defaults = UserDefaults.standard
@@ -102,6 +104,13 @@ final class AndroidFeature: Feature {
         }
         overview.deviceChanged(device)
         let live = Set(new.devices.filter { $0.state == .device }.map(\.id))
+        for id in live.subtracting(liveIDs) {
+            let hub = hub, name = new.devices.first { $0.id == id }?.name ?? "Device"
+            Task {
+                guard let session = try? await hub.session(for: id) else { return }
+                await PowerForces.undoAll(on: session, deviceName: name, store: hub.store)
+            }
+        }
         if live != liveIDs {
             liveIDs = live
             let devices = new.devices, crashes = crashes
