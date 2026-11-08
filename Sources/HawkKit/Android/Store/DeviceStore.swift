@@ -222,6 +222,14 @@ public actor DeviceStore {
         }
     }
 
+    /// Deletes one plain-named file of the device's folder (a record no longer needed).
+    public func remove(file name: String, for id: DeviceID) {
+        pending[id]?[name] = nil
+        guard Self.isPlainName(name) else { return }
+        let url = root.appending(path: Self.folderName(id)).appending(path: name)
+        if files.fileExists(atPath: url.path) { try? files.removeItem(at: url) }
+    }
+
     /// "Forget": the device's folder and everything in it.
     public func remove(_ id: DeviceID) {
         pending[id] = nil

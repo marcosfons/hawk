@@ -35,6 +35,7 @@ struct NetworkSection: View {
                 CertificatesCard(authorities: authorities)
                 TunnelsCard(tunnels: tunnels, saved: saved, live: context.isLive, add: add, remove: remove)
             }
+            CaptureView(context: context)
             Card(title: "Open connections (\(connections.count))", symbol: "point.3.connected.trianglepath.dotted") {
                 DataTable(columns: columns, rows: connections, sortKey: "state", menu: nil, onSelect: nil)
                     .frame(minHeight: 260)

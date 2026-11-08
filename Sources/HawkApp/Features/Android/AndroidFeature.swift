@@ -110,6 +110,9 @@ final class AndroidFeature: Feature {
                 guard let session = try? await hub.session(for: id) else { return }
                 await PowerForces.undoAll(on: session, deviceName: name, store: hub.store)
                 await SavedTunnels.restore(on: session, store: hub.store)
+                // A capture that did not stop cleanly (unplug, crash) leaves the phone's
+                // proxy pointing at Hawk: put the phone's own back (plan F3).
+                await ProxyRestore.restoreIfNeeded(on: session, deviceName: name, store: hub.store)
             }
         }
         if live != liveIDs {
