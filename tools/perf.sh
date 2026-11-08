@@ -163,6 +163,12 @@ phone_serial() {
 }
 SERIAL="$(phone_serial)"
 
+# adbd's CPU ticks (1/100 s), its own and every child it has reaped: each adb shell,
+# and each dumpsys those ran. The phone's top would miss those short-lived processes.
+phone_ticks() {
+    adb -s "$SERIAL" shell 'p=$(pidof adbd); set -- $(cat /proc/$p/stat); echo $((${14}+${15}+${16}+${17}))' 2>/dev/null | tr -d '\r'
+}
+
 FP_START="$(footprint_mb "$PID")"
 LOG_START="$(wc -l <"$TMP/log")"
 [ -n "$ACTION" ] && "$ACTION"
@@ -173,9 +179,8 @@ COUNT=$(( SECS / STEP + 1 ))
 top -l "$COUNT" -s "$STEP" -pid "$PID" -stats pid,cpu,mem,power >"$TMP/top" 2>/dev/null & TOP=$!
 
 if [ -n "$SERIAL" ]; then
-    # Three phone readings 5 s apart while the Mac side is measured; the first is since boot.
-    adb -s "$SERIAL" shell top -b -n 3 -d 5 -o PID,%CPU,RES,ARGS >"$TMP/phone-top" 2>&1 &
-    PHONE=$!
+    PHONE_T0="$(phone_ticks)"
+    PHONE_S0="$(date +%s)"
 fi
 
 if [ "$NAME" = soak ]; then
@@ -188,7 +193,13 @@ if [ "$NAME" = soak ]; then
     done
 fi
 wait "$TOP"
-[ -n "${PHONE:-}" ] && wait "$PHONE"
+if [ -n "$SERIAL" ]; then
+    PHONE_T1="$(phone_ticks)"
+    PHONE_S1="$(date +%s)"
+    # Long-lived processes (logcat, the helper, scrcpy's server) after the window, so
+    # this top is not counted in it.
+    adb -s "$SERIAL" shell top -b -n 1 -o PID,%CPU,RES,ARGS >"$TMP/phone-top" 2>&1
+fi
 kill -0 "$PID" 2>/dev/null || die "Hawk exited during the run"
 FP_END="$(footprint_mb "$PID")"
 
@@ -237,12 +248,8 @@ fi
 
 PHONE_CPU="-"
 if [ -n "$SERIAL" ]; then
-    # Toybox top: a header per iteration, %CPU of one core, ARGS last. Iterations 2 and 3 only.
-    PHONE_CPU="$(awk '
-        /Tasks:/ { it++; next }
-        it >= 2 && ($4 ~ /(adbd|app_process|logcat)/ || $4 ~ /(^|\/)sh$/) { c += $2 }
-        END { if (it >= 2) printf "%.1f", c / (it - 1); else print "?" }
-    ' "$TMP/phone-top")"
+    PHONE_CPU="$(awk -v t0="${PHONE_T0:-}" -v t1="${PHONE_T1:-}" -v s0="$PHONE_S0" -v s1="$PHONE_S1" 'BEGIN {
+        if (t0 == "" || t1 == "" || s1 <= s0) print "?"; else printf "%.2f", (t1 - t0) / (s1 - s0) }')"
     PHONE_LEFT="$(adb -s "$SERIAL" shell 'ps -A -o PID,ARGS' 2>/dev/null | grep -i hawk | grep -v grep)"
 fi
 
@@ -257,7 +264,7 @@ VALID="yes"
     echo "$WHAT. $(date '+%Y-%m-%d %H:%M'), commit $COMMIT, $(sw_vers -productVersion), $(sysctl -n machdep.cpu.brand_string)."
     echo "Measured ${SECS} s after ${WARMUP} s of warm-up. Valid: $VALID."
     echo
-    echo "| CPU avg | Memory (top) | Footprint start | Footprint end | POWER avg | Main thread busy (10 s) | All threads busy | Phone CPU (adbd+sh+...) |"
+    echo "| CPU avg | Memory (top) | Footprint start | Footprint end | POWER avg | Main thread busy (10 s) | All threads busy | Phone CPU (adbd and children) |"
     echo "|---|---|---|---|---|---|---|---|"
     echo "| ${CPU}% | $MEM | ${FP_START} MB | ${FP_END} MB | $POWER | ${MAIN_BUSY:-?} | $ALL_BUSY | ${PHONE_CPU}% |"
     echo
