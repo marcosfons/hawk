@@ -13,6 +13,8 @@ public actor AndroidHub {
         public var devices: [Device] = []
         public var events: [DeviceID: [DeviceEvent]] = [:]
         public var server = AdbServer.Status()
+        /// When each device's package index was last read: re-read `packages(for:)` when it changes.
+        public var packagesDate: [DeviceID: Date] = [:]
         public init() {}
     }
 
@@ -37,8 +39,13 @@ public actor AndroidHub {
     /// Saves in the order they were made, so an older record never lands last.
     private let saves: AsyncStream<(DeviceID, String, Data)>.Continuation
 
+    private var packageIndexes: [DeviceID: PackageIndex] = [:]
+    private var live: Set<DeviceID> = []
+    private var readingPackages: Set<DeviceID> = []
+
     static let deviceFile = "device.json"
     static let eventsFile = "events.json"
+    static let packagesFile = "packages.json"
 
     public init(server: AdbServer = AdbServer(), store: DeviceStore? = DeviceStore()) {
         self.server = server
@@ -60,7 +67,10 @@ public actor AndroidHub {
         if let store {
             let devices = await store.loadAll(Device.self, Self.deviceFile)
             var events: [DeviceID: [DeviceEvent]] = [:]
-            for d in devices { events[d.id] = await store.load([DeviceEvent].self, Self.eventsFile, for: d.id) }
+            for d in devices {
+                events[d.id] = await store.load([DeviceEvent].self, Self.eventsFile, for: d.id)
+                packageIndexes[d.id] = await store.load(PackageIndex.self, Self.packagesFile, for: d.id)
+            }
             registry = DeviceRegistry(devices: devices, events: events)
             saved = registry.devices
             savedEvents = registry.events.compactMapValues(\.last)
@@ -95,6 +105,39 @@ public actor AndroidHub {
 
     public func preferredSerial(_ id: DeviceID) -> String? { registry.preferredSerial(for: id) }
 
+    /// The device's packages as last read (kept across launches).
+    public func packages(for id: DeviceID) -> PackageIndex? { packageIndexes[id] }
+
+    /// Reads the package list again: on connect, and when a plan notices a change
+    /// (an install, an uninstall, a package broadcast in logcat).
+    public func refreshPackages(_ id: DeviceID) async {
+        guard !readingPackages.contains(id) else { return }
+        readingPackages.insert(id)
+        defer { readingPackages.remove(id) }
+        do {
+            let parts = try await session(for: id).shellBatch(PackageIndex.parts, timeout: .seconds(15))
+            var index = PackageIndex.parse(parts)
+            guard !index.packages.isEmpty else { return Log.app.warning("Android package list came back empty") }
+            // Labels come from elsewhere (plan B); a fresh read keeps them.
+            for (name, old) in packageIndexes[id]?.packages ?? [:] where old.label != nil { index.setLabel(old.label, for: name) }
+            packageIndexes[id] = index
+            if store != nil, let data = try? JSONEncoder().encode(index) { saves.yield((id, Self.packagesFile, data)) }
+            Log.app.info("Android package list read: \(index.packages.count) packages")
+            publish()
+        } catch {
+            Log.app.warning("Could not read an Android package list: \((error as? AdbError)?.summary ?? error.localizedDescription)")
+        }
+    }
+
+    /// A plan that learned labels (B's helper) stores them in the shared index.
+    public func setLabels(_ labels: [String: String], for id: DeviceID) {
+        guard var index = packageIndexes[id] else { return }
+        for (name, label) in labels { index.setLabel(label, for: name) }
+        packageIndexes[id] = index
+        if store != nil, let data = try? JSONEncoder().encode(index) { saves.yield((id, Self.packagesFile, data)) }
+        publish()
+    }
+
     public func setNickname(_ name: String?, for id: DeviceID) {
         registry.setNickname(name, for: id)
         publish()
@@ -107,6 +150,7 @@ public actor AndroidHub {
         reconnect.cancel(id)
         saved[id] = nil
         savedEvents[id] = nil
+        packageIndexes[id] = nil
         await store?.remove(id)
         publish()
         return true
@@ -240,10 +284,22 @@ public actor AndroidHub {
         }
         s.events = registry.events
         s.server = serverStatus
+        s.packagesDate = packageIndexes.mapValues(\.date)
+        noticeNewlyLive()
         guard s != lastSnapshot else { return }
         lastSnapshot = s
         continuation.yield(s)
         persist()
+    }
+
+    /// A device that just became usable, with its identity settled, gets its packages read.
+    private func noticeNewlyLive() {
+        let now = Set(registry.devices.keys.filter { id in
+            guard let serial = registry.preferredSerial(for: id) else { return false }
+            return !registry.needsIdentity.contains(serial)
+        })
+        for id in now.subtracting(live) { Task(priority: .utility) { [weak self] in await self?.refreshPackages(id) } }
+        live = now
     }
 
     /// Queues the devices and event lists that changed; the store coalesces the writes.
