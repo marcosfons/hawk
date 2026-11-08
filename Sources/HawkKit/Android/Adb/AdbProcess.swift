@@ -35,6 +35,10 @@ public final class ChildProcesses: Sendable {
     func insert(_ pid: pid_t) { pids.withLock { _ = $0.insert(pid) } }
     func remove(_ pid: pid_t) { pids.withLock { _ = $0.remove(pid) } }
 
+    /// For children started elsewhere (scrcpy, ffmpeg), so they are stopped on quit too.
+    public func track(_ pid: pid_t) { insert(pid) }
+    public func untrack(_ pid: pid_t) { remove(pid) }
+
     /// SIGKILL to every child still running: called when Hawk quits, when there is no
     /// time for the SIGTERM grace period.
     public func killAll() {
