@@ -9,6 +9,8 @@ public enum AndroidAction: Sendable, Equatable {
     case uninstall(package: String)
     case disable(package: String)
     case enable(package: String)
+    /// Installing adds or updates an app; the target is the file name.
+    case install(file: String)
     case deletePath(String)
 
     public var name: String {
@@ -19,6 +21,7 @@ public enum AndroidAction: Sendable, Equatable {
         case .uninstall: "Uninstall"
         case .disable: "Disable"
         case .enable: "Enable"
+        case .install: "Install"
         case .deletePath: "Delete"
         }
     }
@@ -26,6 +29,7 @@ public enum AndroidAction: Sendable, Equatable {
     public var target: String {
         switch self {
         case .forceStop(let p), .clearCache(let p), .clearData(let p), .uninstall(let p), .disable(let p), .enable(let p): p
+        case .install(let file): file
         case .deletePath(let path): path
         }
     }
@@ -103,6 +107,10 @@ public enum AndroidRules {
         case .enable(let p):
             // Turning an app back on never loses anything.
             return ShellQuote.isPackageName(p) ? .allowed : .blocked("Not a package name")
+        case .install:
+            // Android itself refuses a downgrade or a different signature (no -d, no
+            // uninstall first), so an install never loses an app's data.
+            return .allowed
         case .forceStop(let p), .clearCache(let p), .clearData(let p), .uninstall(let p), .disable(let p):
             guard ShellQuote.isPackageName(p) else { return .blocked("Not a package name") }
             if protectedPackages.contains(p) { return .blocked("\(p) is part of the system Hawk never changes") }

@@ -129,6 +129,63 @@ final class AppsModel {
         }
     }
 
+    func open(_ app: AppEntry, context: SectionContext) async {
+        guard let command = AppActions.openCommand(app.name) else { return }
+        do {
+            let out = try await context.hub.session(for: context.device.id).shell(command, timeout: .seconds(15))
+            status = out.stdout.contains("No activities found") ? "\(app.title) has nothing to open" : nil
+        } catch {
+            status = "Could not open \(app.title): \((error as? AdbError)?.summary ?? error.localizedDescription)"
+        }
+    }
+
+    /// Every split of the app into `folder`, named by the package so the device cannot
+    /// choose where anything is written.
+    func saveAPK(_ app: AppEntry, to folder: URL, context: SectionContext) async {
+        do {
+            guard let pkg = ShellQuote.package(app.name) else { return }
+            let session = try await context.hub.session(for: context.device.id)
+            let paths = AppActions.parseApkPaths(try await session.shell("pm path \(pkg)", timeout: .seconds(15)).stdout)
+            guard !paths.isEmpty else { status = "No APK found for \(app.title)"; return }
+            status = "Saving \(paths.count) file\(paths.count == 1 ? "" : "s") of \(app.title)"
+            for path in paths {
+                try await session.pull(path, to: folder.appending(path: AppActions.localName(package: app.name, remote: path)), timeout: .seconds(600))
+            }
+            status = "Saved \(app.title) to \(folder.lastPathComponent)"
+        } catch {
+            status = "Could not save \(app.title): \((error as? AdbError)?.summary ?? error.localizedDescription)"
+        }
+    }
+
+    /// Dropped APK files: one install, or one split set.
+    func install(_ files: [URL], context: SectionContext) async {
+        guard let args = AppActions.installArguments(files) else {
+            status = "Only .apk files can be installed (one app, or the splits of one app)"
+            return
+        }
+        let name = files.map(\.lastPathComponent).joined(separator: ", ")
+        status = "Installing \(name)"
+        var result: ActionLog.Result
+        do {
+            let out = try await context.hub.session(for: context.device.id).exec(args, timeout: .seconds(600))
+            let text = (out.text + out.stderr).trimmingCharacters(in: .whitespacesAndNewlines)
+            result = out.status == 0 && text.contains("Success") ? .done : .failed(String(text.suffix(200)))
+        } catch {
+            result = .failed((error as? AdbError)?.summary ?? error.localizedDescription)
+        }
+        if let store = context.hub.store {
+            try? await ActionLog.append(device: context.device.name, action: .install(file: name), result: result, id: context.device.id, store: store)
+        }
+        switch result {
+        case .done:
+            status = "Installed \(name)"
+            await context.hub.refreshPackages(context.device.id)
+            await refresh(context)
+        case .failed(let why), .blocked(let why):
+            status = "Install failed: \(why)"
+        }
+    }
+
     private func setApps(_ new: [AppEntry]) {
         guard new != apps else { return }
         apps = new

@@ -116,3 +116,26 @@ import Testing
         #expect(!AndroidRules.verdict(.enable(package: "bad name"), facts: facts).isAllowed)
     }
 }
+
+@Suite struct AndroidAppFilesTests {
+    @Test func apkPaths() {
+        let out = "package:/data/app/~~Ab==/com.example.app-Cd==/base.apk\npackage:/data/app/~~Ab==/com.example.app-Cd==/split_config.arm64_v8a.apk\npackage:relative.apk\npackage:/data/../x.apk\npackage:/data/app/x.txt\n"
+        #expect(AppActions.parseApkPaths(out).count == 2)
+    }
+
+    @Test func localNamesCannotEscape() {
+        #expect(AppActions.localName(package: "com.example.app", remote: "/data/app/x/base.apk") == "com.example.app-base.apk")
+        #expect(AppActions.localName(package: "com.example.app", remote: "/data/app/x/split config;rm.apk") == "com.example.app-split_config_rm.apk")
+        #expect(AppActions.localName(package: "com.example.app", remote: "/data/app/x/..apk") == "com.example.app-base.apk")
+        #expect(!AppActions.localName(package: "com.example.app", remote: "/a/b/../../etc/passwd").contains("/"))
+    }
+
+    @Test func installArguments() {
+        #expect(AppActions.installArguments([URL(filePath: "/tmp/a.apk")]) == ["install", "-r", "/tmp/a.apk"])
+        #expect(AppActions.installArguments([URL(filePath: "/tmp/base.apk"), URL(filePath: "/tmp/split.apk")])?.first == "install-multiple")
+        #expect(AppActions.installArguments([URL(filePath: "/tmp/a.apks")]) == nil)
+        #expect(AppActions.installArguments([]) == nil)
+        #expect(AppActions.openCommand("com.example.app") == "monkey -p 'com.example.app' -c android.intent.category.LAUNCHER 1")
+        #expect(AppActions.openCommand("bad name") == nil)
+    }
+}

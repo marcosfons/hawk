@@ -29,9 +29,16 @@ struct AppsSection: View {
 
     private var table: some View {
         let actions: (([AppEntry]) -> [ContextAction?])? = context.isLive ? { menu($0) } : nil
+        let model = model, context = context
         return DataTable(columns: columns, rows: model.shown, sortKey: "label", menu: actions, onSelect: nil)
             .tableCard()
             .frame(minHeight: 420)
+            // Drop .apk files on the list to install them.
+            .dropDestination(for: URL.self) { urls, _ in
+                guard context.isLive, !urls.isEmpty else { return false }
+                Task { await model.install(urls, context: context) }
+                return true
+            }
     }
 
     private struct Key: Equatable { let device: DeviceID; let live: Bool; let shown: Bool }
@@ -71,6 +78,17 @@ struct AppsSection: View {
         items.append(ContextAction(title: "Copy Package Name") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(app.name, forType: .string)
+        })
+        items.append(ContextAction(title: "Open on Device") { Task { await model.open(app, context: context) } })
+        items.append(ContextAction(title: "Save APK...") {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.canCreateDirectories = true
+            panel.prompt = "Save Here"
+            panel.message = "Choose a folder for \(app.title)'s APK files"
+            guard panel.runModal() == .OK, let folder = panel.url else { return }
+            Task { await model.saveAPK(app, to: folder, context: context) }
         })
         items.append(nil)
         items.append(ContextAction(title: "Force Stop") { run(.forceStop(package: app.name)) })

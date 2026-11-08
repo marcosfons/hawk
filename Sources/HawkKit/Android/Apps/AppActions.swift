@@ -42,8 +42,38 @@ public enum AppActions {
         case .uninstall: return isSystem ? "pm uninstall --user 0 \(pkg)" : "pm uninstall \(pkg)"
         case .disable: return "pm disable-user --user 0 \(pkg)"
         case .enable: return "pm enable \(pkg)"
-        case .deletePath: return nil
+        case .install, .deletePath: return nil
         }
+    }
+
+    /// Starts the app's launcher activity.
+    public static func openCommand(_ package: String) -> String? {
+        ShellQuote.package(package).map { "monkey -p \($0) -c android.intent.category.LAUNCHER 1" }
+    }
+
+    /// `pm path` lines, "package:/data/app/~~x/com.example-y/base.apk": every split.
+    public static func parseApkPaths(_ text: String) -> [String] {
+        text.prefix(64 * 1024).split(whereSeparator: \.isNewline).prefix(64).compactMap { line in
+            guard line.hasPrefix("package:") else { return nil }
+            let path = String(line.dropFirst(8)).trimmingCharacters(in: .whitespaces)
+            return ShellQuote.isRemotePath(path) && path.hasSuffix(".apk") ? path : nil
+        }
+    }
+
+    /// A local file name for a pulled split: the package, then the split's own name
+    /// reduced to plain characters, so nothing from the device can choose a path.
+    public static func localName(package: String, remote: String) -> String {
+        let last = remote.split(separator: "/").last.map(String.init) ?? "base.apk"
+        let plain = String(last.map { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) ? $0 : "_" }).prefix(80)
+        let name = plain.hasPrefix(".") || plain.isEmpty ? "base.apk" : String(plain)
+        return "\(package)-\(name.hasSuffix(".apk") ? name : name + ".apk")"
+    }
+
+    /// `adb install` for one APK, `install-multiple` for a split set; `-r` keeps data.
+    public static func installArguments(_ files: [URL]) -> [String]? {
+        let apks = files.filter { $0.pathExtension.lowercased() == "apk" }
+        guard !apks.isEmpty, apks.count == files.count, apks.count <= 64 else { return nil }
+        return (apks.count == 1 ? ["install", "-r"] : ["install-multiple", "-r"]) + apks.map(\.path)
     }
 
     /// `pm`/`am` print "Success" or nothing on success, and "Failure [...]" or an
