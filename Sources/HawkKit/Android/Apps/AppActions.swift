@@ -42,6 +42,7 @@ public enum AppActions {
         case .uninstall: return isSystem ? "pm uninstall --user 0 \(pkg)" : "pm uninstall \(pkg)"
         case .disable: return "pm disable-user --user 0 \(pkg)"
         case .enable: return "pm enable \(pkg)"
+        case .reinstall: return "cmd package install-existing --user 0 \(pkg)"
         case .install, .change, .deletePath: return nil
         }
     }
