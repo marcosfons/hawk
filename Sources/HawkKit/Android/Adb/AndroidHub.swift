@@ -29,16 +29,42 @@ public actor AndroidHub {
     private var timer: Task<Void, Never>?
     private var listeners: [Task<Void, Never>] = []
     private var lastSnapshot: Snapshot?
+    /// Where known devices and their events are kept; nil keeps nothing (tests).
+    public let store: DeviceStore?
+    private var saved: [DeviceID: Device] = [:]
+    /// The newest event written per device (lists are capped, so counts stop changing).
+    private var savedEvents: [DeviceID: DeviceEvent] = [:]
+    /// Saves in the order they were made, so an older record never lands last.
+    private let saves: AsyncStream<(DeviceID, String, Data)>.Continuation
 
-    public init(server: AdbServer = AdbServer(), devices: [Device] = [], events: [DeviceID: [DeviceEvent]] = [:]) {
+    static let deviceFile = "device.json"
+    static let eventsFile = "events.json"
+
+    public init(server: AdbServer = AdbServer(), store: DeviceStore? = DeviceStore()) {
         self.server = server
-        registry = DeviceRegistry(devices: devices, events: events)
+        self.store = store
+        registry = DeviceRegistry()
         (snapshots, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let (queue, saves) = AsyncStream.makeStream(of: (DeviceID, String, Data).self)
+        self.saves = saves
+        if let store {
+            Task(priority: .utility) {
+                for await (id, name, data) in queue { await store.save(data, as: name, for: id) }
+            }
+        }
     }
 
-    /// Once, at launch: start supervising adb and listening to it.
+    /// Once, at launch: load the devices seen before, then supervise adb and listen to it.
     public func start() async {
         guard listeners.isEmpty else { return }
+        if let store {
+            let devices = await store.loadAll(Device.self, Self.deviceFile)
+            var events: [DeviceID: [DeviceEvent]] = [:]
+            for d in devices { events[d.id] = await store.load([DeviceEvent].self, Self.eventsFile, for: d.id) }
+            registry = DeviceRegistry(devices: devices, events: events)
+            saved = registry.devices
+            savedEvents = registry.events.compactMapValues(\.last)
+        }
         let server = server
         listeners = [
             Task(priority: .utility) { [weak self] in
@@ -74,13 +100,20 @@ public actor AndroidHub {
         publish()
     }
 
+    /// Removes a disconnected device and its folder.
     @discardableResult
-    public func forget(_ id: DeviceID) -> Bool {
+    public func forget(_ id: DeviceID) async -> Bool {
         guard registry.forget(id) else { return false }
         reconnect.cancel(id)
+        saved[id] = nil
+        savedEvents[id] = nil
+        await store?.remove(id)
         publish()
         return true
     }
+
+    /// Writes what is queued now (Hawk is quitting).
+    public func flush() async { await store?.flush() }
 
     // MARK: -
 
@@ -210,5 +243,20 @@ public actor AndroidHub {
         guard s != lastSnapshot else { return }
         lastSnapshot = s
         continuation.yield(s)
+        persist()
+    }
+
+    /// Queues the devices and event lists that changed; the store coalesces the writes.
+    private func persist() {
+        guard store != nil else { return }
+        let encoder = JSONEncoder()
+        for (id, device) in registry.devices where saved[id] != device {
+            saved[id] = device
+            if let data = try? encoder.encode(device) { saves.yield((id, Self.deviceFile, data)) }
+        }
+        for (id, list) in registry.events where list.last != savedEvents[id] {
+            savedEvents[id] = list.last
+            if let data = try? encoder.encode(list) { saves.yield((id, Self.eventsFile, data)) }
+        }
     }
 }
