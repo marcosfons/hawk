@@ -28,6 +28,7 @@ struct ShellSection: View {
     @State private var newName = ""
     @State private var newCommand = ""
     @State private var forThisDevice = true
+    @State private var everyDevice = false
 
     private static let key = "androidQuickCommands"
 
@@ -42,6 +43,7 @@ struct ShellSection: View {
                 .controlSize(.small)
             }
             Card(title: "Quick commands", symbol: "bolt") {
+                Toggle("Run on every connected device", isOn: $everyDevice).controlSize(.small)
                 ForEach(visible) { c in
                     HStack {
                         Button(c.name) { Task { await run(c) } }.disabled(!context.isLive || running)
@@ -55,7 +57,7 @@ struct ShellSection: View {
                 HStack {
                     TextField("Name", text: $newName).frame(width: 140)
                     TextField("Command, e.g. dumpsys battery | head", text: $newCommand).font(.system(size: 11, design: .monospaced))
-                    Toggle("This device only", isOn: $forThisDevice)
+                    Toggle("Save for this device only", isOn: $forThisDevice)
                     Button("Add") { add() }.disabled(newName.isEmpty || newCommand.isEmpty)
                 }
                 .controlSize(.small).textFieldStyle(.roundedBorder)
@@ -101,6 +103,15 @@ struct ShellSection: View {
     private func run(_ c: QuickCommand) async {
         running = true
         defer { running = false }
+        if everyDevice {
+            var parts: [String] = []
+            for d in await context.hub.devices().filter({ $0.state == .device }).sorted(by: { $0.name < $1.name }) {
+                let r = try? await context.hub.session(for: d.id).shell(c.command, timeout: .seconds(30))
+                parts.append("== \(d.name)\n" + (r.map { $0.stdout + $0.stderr } ?? "(no answer)"))
+            }
+            output = String(parts.joined(separator: "\n").prefix(200_000))
+            return
+        }
         do {
             let r = try await context.hub.session(for: context.device.id).shell(c.command, timeout: .seconds(30))
             let text = r.stdout + (r.stderr.isEmpty ? "" : "\n" + r.stderr)

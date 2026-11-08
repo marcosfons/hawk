@@ -48,6 +48,7 @@ private struct Sidebar: View {
                         .contextMenu {
                             Button("Rename...") { newName = device.nickname ?? ""; renaming = device }
                             Button("Forget...") { forgetting = device }.disabled(device.isConnected)
+                            Button("Save report...") { saveReport(device) }
                         }
                         .accessibilityAddTraits(.isButton)
                 }
@@ -73,6 +74,22 @@ private struct Sidebar: View {
             Button("Forget \(device.name)", role: .destructive) { feature.forget(device.id) }
         } message: { _ in
             Text("Hawk deletes everything it kept about it: snapshot, history, events and its folder.")
+        }
+    }
+
+    /// Everything Hawk keeps for the device, zipped where the user chooses.
+    private func saveReport(_ device: Device) {
+        guard let store = feature.hub.store else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(DeviceReport.safe(device.name))-report.zip"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task {
+            do {
+                let zip = try await DeviceReport.write(for: device.id, name: device.name, store: store, to: url)
+                NSWorkspace.shared.activateFileViewerSelecting([zip])
+            } catch {
+                Log.app.error("Could not write the Android device report: \(error.localizedDescription)")
+            }
         }
     }
 

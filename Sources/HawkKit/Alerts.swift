@@ -32,6 +32,7 @@ public struct FanAlert: Sendable, Identifiable, Equatable {
         case mac
         case androidANR
         case androidCrash
+        case androidDevice
     }
 
     public init(key: String, title: String, body: String, date: Date = Date(), kind: Kind = .mac) {

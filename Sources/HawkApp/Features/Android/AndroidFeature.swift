@@ -42,12 +42,14 @@ final class AndroidFeature: Feature {
     /// Devices usable at the last snapshot: the crash watcher follows them (plan C),
     /// and one that becomes usable again gets its forced power states undone (plan D).
     @ObservationIgnored private var liveIDs: Set<DeviceID> = []
+    @ObservationIgnored private let monitor: Monitor
     @ObservationIgnored let overview: OverviewModel
     @ObservationIgnored private let defaults = UserDefaults.standard
     /// The tab is on screen (window open and visible); sections stop their work otherwise.
     private(set) var visible = false
 
     init(monitor: Monitor) {
+        self.monitor = monitor
         let hub = hub
         overview = OverviewModel(hub: hub)
         crashes = CrashWatcher(hub: hub)
@@ -113,6 +115,14 @@ final class AndroidFeature: Feature {
                 // A capture that did not stop cleanly (unplug, crash) leaves the phone's
                 // proxy pointing at Hawk: put the phone's own back (plan F3).
                 await ProxyRestore.restoreIfNeeded(on: session, deviceName: name, store: hub.store)
+            }
+        }
+        // A device that drops while the server runs raises an alert (a user stop does not).
+        if case .running = new.server.state {
+            for id in liveIDs.subtracting(live) {
+                let name = new.devices.first { $0.id == id }?.name ?? "A device"
+                monitor.post(FanAlert(key: "android-gone-\(id.rawValue)-\(Int(Date().timeIntervalSince1970))", title: "\(name) disconnected",
+                                      body: "It dropped off adb. Hawk keeps its data and picks it up again when it is back.", kind: .androidDevice))
             }
         }
         if live != liveIDs {

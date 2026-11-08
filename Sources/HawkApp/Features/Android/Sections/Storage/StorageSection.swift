@@ -27,6 +27,7 @@ struct StorageSection: View {
                     VolumesCard(storage: s)
                     BiggestCard(apps: s.biggest(15), labels: model.labels)
                 }
+                SaverView(context: context)
             } else if model.refreshing {
                 ProgressView("Reading storage").frame(maxWidth: .infinity, minHeight: 200)
             } else {
