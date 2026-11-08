@@ -64,6 +64,10 @@ the same kind), so differences smaller than that are noise, not regressions.
 | 2026-11-07 | M8 | android-overview (Android tab on Overview, batch every 3 s) | 2.25% | 45 MB | 2.26 | 249 | see below |
 | 2026-11-07 | M8 | adb-down (Android tab, fake adb failing) | 2.26% | 45 MB | 2.27 | 219 | 0.1% |
 
+| 2026-11-07 | M8 | soak (Android tab on Overview, 10 min) | 2.37% | 52 MB | 2.38 | 234 | - |
+
+The 10-minute soak drifted -11 MB (63 to 52 MB) and `leaks` found 0.
+
 The phone's `top` reads 0.1% for android-overview, but it only counts processes
 alive at both of its samples and misses the short-lived `dumpsys` runs. From
 per-command measurements the Overview schedule costs about 1.6% of a core;
