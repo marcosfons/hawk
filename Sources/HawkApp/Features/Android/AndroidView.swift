@@ -32,6 +32,7 @@ private struct Sidebar: View {
     @State private var renaming: Device?
     @State private var newName = ""
     @State private var forgetting: Device?
+    @State private var comparing: ComparePair?
 
     var body: some View {
         ScrollView {
@@ -49,6 +50,11 @@ private struct Sidebar: View {
                             Button("Rename...") { newName = device.nickname ?? ""; renaming = device }
                             Button("Forget...") { forgetting = device }.disabled(device.isConnected)
                             Button("Save report...") { saveReport(device) }
+                            let others = feature.snapshot.devices.filter { $0.id != device.id }
+                            Menu("Compare with") {
+                                ForEach(others) { other in Button(other.name) { comparing = ComparePair(a: device, b: other) } }
+                            }
+                            .disabled(others.isEmpty)
                         }
                         .accessibilityAddTraits(.isButton)
                 }
@@ -69,6 +75,7 @@ private struct Sidebar: View {
             Button("Rename") { feature.rename(device.id, to: newName) }
             Button("Cancel", role: .cancel) {}
         }
+        .sheet(item: $comparing) { CompareSheet(feature: feature, pair: $0) }
         .confirmationDialog("Forget this device?", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
                             presenting: forgetting) { device in
             Button("Forget \(device.name)", role: .destructive) { feature.forget(device.id) }
