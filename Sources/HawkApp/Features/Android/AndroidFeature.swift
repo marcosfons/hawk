@@ -42,6 +42,11 @@ final class AndroidFeature: Feature {
     /// Devices usable at the last snapshot: the crash watcher follows them (plan C),
     /// and one that becomes usable again gets its forced power states undone (plan D).
     @ObservationIgnored private var liveIDs: Set<DeviceID> = []
+    /// Battery and storage alerts already raised, per device (plan F5).
+    @ObservationIgnored private var health = DeviceHealth.Tracker()
+    /// When adb last started running: devices found in the first seconds after are
+    /// the ones already plugged in, not new connections, and do not alert.
+    @ObservationIgnored private var runningSince: Date?
     @ObservationIgnored private let monitor: Monitor
     @ObservationIgnored let overview: OverviewModel
     @ObservationIgnored private let defaults = UserDefaults.standard
@@ -70,6 +75,16 @@ final class AndroidFeature: Feature {
             for await snapshot in hub.snapshots {
                 guard let self else { return }
                 self.received(snapshot)
+            }
+        }
+        Task { [weak self] in
+            for await h in crashes.health {
+                guard let self else { return }
+                for a in self.health.evaluate(h.reading, device: h.device, name: h.name) {
+                    Log.app.info("Android health alert: \(a.issue.rawValue)")
+                    monitor.post(FanAlert(key: "android-\(a.issue.rawValue)-\(h.device.rawValue)-\(Int(Date().timeIntervalSince1970))",
+                                          title: a.title, body: a.body, kind: .androidDevice))
+                }
             }
         }
     }
@@ -117,14 +132,27 @@ final class AndroidFeature: Feature {
                 await ProxyRestore.restoreIfNeeded(on: session, deviceName: name, store: hub.store)
             }
         }
-        // A device that drops while the server runs raises an alert (a user stop does not).
+        // A device that drops while the server runs raises an alert (a user stop does not),
+        // and so does one that arrives once the server has settled.
         if case .running = new.server.state {
+            let since = runningSince ?? Date()
+            runningSince = since
+            if Date().timeIntervalSince(since) >= 10 {
+                for id in live.subtracting(liveIDs) {
+                    let name = new.devices.first { $0.id == id }?.name ?? "A device"
+                    monitor.post(FanAlert(key: "android-new-\(id.rawValue)-\(Int(Date().timeIntervalSince1970))", title: "\(name) connected",
+                                          body: "It is on adb and Hawk is watching it for crashes, ANRs, battery and storage.", kind: .androidDevice))
+                }
+            }
             for id in liveIDs.subtracting(live) {
                 let name = new.devices.first { $0.id == id }?.name ?? "A device"
                 monitor.post(FanAlert(key: "android-gone-\(id.rawValue)-\(Int(Date().timeIntervalSince1970))", title: "\(name) disconnected",
                                       body: "It dropped off adb. Hawk keeps its data and picks it up again when it is back.", kind: .androidDevice))
             }
+        } else {
+            runningSince = nil
         }
+        for id in liveIDs.subtracting(live) { health.forget(id) }
         if live != liveIDs {
             liveIDs = live
             let devices = new.devices, crashes = crashes

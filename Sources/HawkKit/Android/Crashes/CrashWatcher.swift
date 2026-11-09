@@ -14,6 +14,11 @@ public actor CrashWatcher {
 
     public nonisolated let alerts: AsyncStream<Alert>
     private let continuation: AsyncStream<Alert>.Continuation
+    /// Battery and storage, read in the same shell call as the listing every
+    /// `DeviceHealth.interval` (plan F5): no extra call on the phone.
+    public nonisolated let health: AsyncStream<(device: DeviceID, name: String, reading: DeviceHealth.Reading)>
+    private let healthContinuation: AsyncStream<(device: DeviceID, name: String, reading: DeviceHealth.Reading)>.Continuation
+    private var lastHealth: [DeviceID: Date] = [:]
     private let hub: AndroidHub
     private var logs: [DeviceID: CrashLog] = [:]
     private var live: [DeviceID: String] = [:]
@@ -28,6 +33,7 @@ public actor CrashWatcher {
     public init(hub: AndroidHub) {
         self.hub = hub
         (alerts, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(50))
+        (health, healthContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(20))
     }
 
     public func setWatched(_ packages: Set<String>) { watched = packages }
@@ -38,6 +44,7 @@ public actor CrashWatcher {
         let now = Dictionary(devices.filter { $0.state == .device }.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
         let added = Set(now.keys).subtracting(live.keys)
         live = now
+        for id in lastHealth.keys where now[id] == nil { lastHealth[id] = nil }
         for id in added { Task(priority: .utility) { await self.check(id, full: true) } }
         if live.isEmpty {
             loop?.cancel()
@@ -69,8 +76,15 @@ public actor CrashWatcher {
         var log = await log(for: id)
         do {
             let session = try await hub.session(for: id)
-            let listing = try await session.shell(full ? DropBox.fullListing : DropBox.recentListing, timeout: .seconds(15))
-            let fresh = log.new(DropBox.parseListing(listing.stdout))
+            let withHealth = full || Date().timeIntervalSince(lastHealth[id] ?? .distantPast) >= DeviceHealth.interval
+            let script = (full ? DropBox.fullListing : DropBox.recentListing) + (withHealth ? "; " + DeviceHealth.probe : "")
+            let output = try await session.shell(script, timeout: .seconds(15))
+            let (listing, reading) = DeviceHealth.split(output.stdout)
+            if let reading {
+                lastHealth[id] = Date()
+                healthContinuation.yield((id, name, reading))
+            }
+            let fresh = log.new(DropBox.parseListing(listing))
             guard !fresh.isEmpty || log.since == nil else { return }
             var fetched: [CrashRecord] = []
             for tag in Set(fresh.map(\.tag)).sorted() {
